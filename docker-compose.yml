@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15
-    container_name: django_postgres_db
+    container_name: postgres_db
     environment:
       - POSTGRES_DB=business_db
       - POSTGRES_USER=artacsercs
@@ -12,6 +10,18 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+
+  web:
+    build: .
+    container_name: django_salon_tools
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgres://artacsercs:${DATA_BASE_PASSWORD}@db:5432/business_db
+    restart: always
 
 volumes:
   pg_data:
