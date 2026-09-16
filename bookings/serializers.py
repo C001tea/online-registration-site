@@ -9,7 +9,7 @@ class MasterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Master
-        fields = ['id', 'name', 'photo', 'description', 'is_active', 'avg_rating', 'reviews_count']
+        fields = ['id', 'name', 'photo', 'description', 'is_active', 'avg_rating', 'reviews_count', 'company']
 
     def get_reviews_count(self, obj):
         return obj.reviews.count()

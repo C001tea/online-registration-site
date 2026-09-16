@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+import uuid
 
 class Company(models.Model):
     name = models.CharField(max_length=200)
@@ -14,8 +15,8 @@ class Company(models.Model):
     def __str__(self):
         return self.name
 
-
 class Master(models.Model):
+    user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='worker_profile')
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='masters')
     name = models.CharField(max_length=200)
     photo = models.ImageField(upload_to='masters/', blank=True, null=True)
@@ -55,8 +56,8 @@ class Appointment(models.Model):
     ]
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='appointments')
-    master = models.ForeignKey(Master, on_delete=models.CASCADE, related_name='appointments')
-    service = models.ForeignKey(Service, on_delete=models.CASCADE, related_name='appointments')
+    master = models.ForeignKey(Master, on_delete=models.SET_NULL, related_name='appointments')
+    service = models.ForeignKey(Service, on_delete=models.SET_NULL, related_name='appointments')
     client_name = models.CharField(max_length=200)
     client_phone = models.CharField(max_length=20)
     client_email = models.EmailField(blank=True)
@@ -72,7 +73,6 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"{self.client_name} - {self.date} {self.start_time}"
-
 
 
 class MasterSchedule(models.Model):
@@ -120,3 +120,9 @@ class Review(models.Model):
 
     def __str__(self):
         return f"{self.client.name} - {self.master.name} - {self.rating}"
+
+
+class AdminProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="admin_profile")
+    company = models.OneToOneField(Company, on_delete=models.SET_NULL, null=True, blank=True, related_name="admins")
+    access_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=True)
