@@ -56,8 +56,8 @@ class Appointment(models.Model):
     ]
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='appointments')
-    master = models.ForeignKey(Master, on_delete=models.SET_NULL, related_name='appointments')
-    service = models.ForeignKey(Service, on_delete=models.SET_NULL, related_name='appointments')
+    master = models.ForeignKey(Master, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
+    service = models.ForeignKey(Service, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
     client_name = models.CharField(max_length=200)
     client_phone = models.CharField(max_length=20)
     client_email = models.EmailField(blank=True)
