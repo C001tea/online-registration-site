@@ -6,6 +6,7 @@ from django.db.models import Avg
 class MasterSerializer(serializers.ModelSerializer):
     reviews_count = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
+    company = serializers.ReadOnlyField(source='company.name')
 
     class Meta:
         model = Master
