@@ -8,19 +8,30 @@ from datetime import datetime, timedelta
 from django.db.models import Avg
 
 
-class MasterListView(generics.ListAPIView):
-    serializer_class = MasterSerializer
+class MasterListView(APIView):
+    def get(self, request, slug):
+        company = get_object_or_404(Company, slug=slug)
+        masters = Master.objects.all()
+        service_id = request.query_params.get('service')
+        if service_id:
+            service = get_object_or_404(Service, company=company, id=service_id)
+            masters = masters.filter(services=service)
 
-    def get_queryset(self):
-        company = get_object_or_404(Company, slug=self.kwargs['slug'])
-        return Master.objects.filter(company=company, is_active=True)
+        serializer = MasterSerializer(masters, many=True)
+        return Response(serializer.data)
 
-class ServiceListView(generics.ListAPIView):
-    serializer_class = ServiceSerializer
+class ServiceListView(APIView):
+    def get(self, request, slug):
+        company = get_object_or_404(Company, slug=slug)
+        services = Service.objects.all()
+        master_id = request.query_params.get('master')
+        if master_id:
+            master = get_object_or_404(Master, company=company, id=master_id)
+            services = services.filter(masters=master)
 
-    def get_queryset(self):
-        company = get_object_or_404(Company, slug=self.kwargs['slug'])
-        return Service.objects.filter(company=company, is_active=True)
+        serializer = ServiceSerializer(services, many=True)
+
+        return Response(serializer.data)
 
 
 class AppointmentCreateView(generics.CreateAPIView):
@@ -39,7 +50,6 @@ class AppointmentCreateView(generics.CreateAPIView):
         client = self.request.user if self.request.user.is_authenticated else None
 
         serializer.save(company=company, status='pending', end_time=end_dt.time(), client=client)
-
 
 
 class SlotListView(APIView):
