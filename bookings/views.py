@@ -15,7 +15,6 @@ class MasterListView(generics.ListAPIView):
         company = get_object_or_404(Company, slug=self.kwargs['slug'])
         return Master.objects.filter(company=company, is_active=True)
 
-
 class ServiceListView(generics.ListAPIView):
     serializer_class = ServiceSerializer
 
@@ -156,3 +155,11 @@ class ReviewView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class MasterServices(generics.ListAPIView):
+    serializer_class = ServiceSerializer
+
+    def get_queryset(self):
+        company = get_object_or_404(Company, slug=self.kwargs['slug'])
+        master = get_object_or_404(Master, id=self.kwargs['master_id'], company=company)
+        return master.services.all()

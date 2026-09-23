@@ -72,3 +72,4 @@ class ReviewSerializer(serializers.ModelSerializer):
 
     def get_client_name(self, obj):
         return f"{obj.client.profile.name} {obj.client.profile.surname}"
+
