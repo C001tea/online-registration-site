@@ -52,6 +52,50 @@ class AppointmentCreateView(generics.CreateAPIView):
         serializer.save(company=company, status='pending', end_time=end_dt.time(), client=client)
 
 
+class SelectData(APIView):
+    def get(self, request, slug):
+        all_free_points = set()
+        company = get_object_or_404(Company, slug=slug)
+        masters = Master.objects.filter(company=company)
+        date = request.query_params.get('date')
+        try:
+            date = datetime.strptime(date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({"error": "Date format: YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+        duration = timedelta(minutes=30)
+
+        for master in masters.prefetch_related("appointments").all():
+            try:
+                schedule = MasterSchedule.objects.get(master=master, day_of_week=date.weekday(), is_working=True)
+            except MasterSchedule.DoesNotExist:
+                continue
+
+            busy = Appointment.objects.filter(
+                master=master,
+                date=date,
+                status__in=['pending', 'confirmed']
+            ).values_list('start_time', 'end_time')
+
+            slots = []
+            current = datetime.combine(date, schedule.start_time)
+            end = datetime.combine(date, schedule.end_time)
+            while duration + current <= end:
+                slots.append(current.time())
+                current += timedelta(minutes=30)
+
+            for slot in slots:
+                slot_start = datetime.combine(date, slot)
+                slot_end = slot_start + duration
+
+                is_busy = any(datetime.combine(date, busy_start) < slot_end and datetime.combine(date, busy_end) > slot_start
+                              for busy_start, busy_end in busy)
+
+                if not is_busy:
+                    all_free_points.add(slot.strftime('%H:%M'))
+
+        free_points = sorted(all_free_points)
+        return Response(free_points)
+
 class SlotListView(APIView):
     def get(self, request, slug):
         company = get_object_or_404(Company, slug=slug)

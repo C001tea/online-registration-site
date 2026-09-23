@@ -7,6 +7,7 @@ urlpatterns = [
     path('companies/<slug:slug>/services/', views.ServiceListView.as_view()),
     path('companies/<slug:slug>/appointments/', views.AppointmentCreateView.as_view()),
     path('companies/<slug:slug>/slots/', views.SlotListView.as_view()),
+    path('companies/<slug:slug>/points/', views.SelectData.as_view()),
     path('companies/<slug:slug>/info/', views.CompanyInfoView.as_view()),
     path('companies/<slug:slug>/master/<int:master_id>/reviews/', views.ReviewView.as_view()),
     path('companies/<slug:slug>/master/<int:master_id>/services/', views.MasterServices.as_view()),
