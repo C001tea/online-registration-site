@@ -5,7 +5,7 @@ admin.site.register(Company)
 
 @admin.register(Master)
 class MasterAdmin(admin.ModelAdmin):
-    list_display = ['company', ]
+    list_display = ['company', 'name']
 
 admin.site.register(Service)
 admin.site.register(ServiceCategory)
