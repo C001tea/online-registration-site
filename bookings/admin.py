@@ -2,7 +2,6 @@ from django.contrib import admin
 from .models import Company, Master, Service, ServiceCategory, Appointment, MasterSchedule, ClientProfile
 
 admin.site.register(Company)
-admin.site.register(Master)
 
 @admin.register(Master)
 class MasterAdmin(admin.ModelAdmin):
