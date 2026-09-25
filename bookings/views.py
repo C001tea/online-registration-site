@@ -62,7 +62,7 @@ class ServiceListView(APIView):
     def get(self, request, slug):
         company = get_object_or_404(Company, slug=slug)
         services = company.services.all()
-        master_id = request.query_params.get('master')
+        master_id = request.query_params.get('master_id')
         date = request.query_params.get("date")
         time = request.query_params.get("time")
 
