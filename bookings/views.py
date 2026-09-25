@@ -43,7 +43,7 @@ def get_free_slots(date, master, duration_time):
         if not is_busy:
             free_slots.append(slot)
 
-    return Response(free_slots)
+    return free_slots
 
 
 class MasterListView(APIView):
