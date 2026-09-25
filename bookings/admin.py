@@ -3,6 +3,11 @@ from .models import Company, Master, Service, ServiceCategory, Appointment, Mast
 
 admin.site.register(Company)
 admin.site.register(Master)
+
+@admin.register(Master)
+class MasterAdmin(admin.ModelAdmin):
+    list_display = ['services', 'company']
+
 admin.site.register(Service)
 admin.site.register(ServiceCategory)
 admin.site.register(Appointment)

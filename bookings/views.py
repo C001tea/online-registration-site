@@ -8,6 +8,44 @@ from datetime import datetime, timedelta
 from django.db.models import Avg
 
 
+
+def get_free_slots(date, master, duration_time):
+
+
+    try:
+        schedule = MasterSchedule.objects.get(master=master, day_of_week=date.weekday(), is_working=True)
+    except MasterSchedule.DoesNotExist:
+        return []
+
+    duration = timedelta(minutes=duration_time)
+
+    busy = Appointment.objects.filter(
+        master=master,
+        date=date,
+        status__in=['pending', 'confirmed']
+    ).values_list('start_time', 'end_time')
+
+    slots = []
+    current = datetime.combine(date, schedule.start_time)
+    end = datetime.combine(date, schedule.end_time)
+    while duration + current <= end:
+        slots.append(current.time())
+        current += timedelta(minutes=30)
+
+    free_slots = []
+    for slot in slots:
+        slot_start = datetime.combine(date, slot)
+        slot_end = slot_start + duration
+
+        is_busy = any(datetime.combine(date, busy_start) < slot_end and datetime.combine(date, busy_end) > slot_start
+                      for busy_start, busy_end in busy)
+
+        if not is_busy:
+            free_slots.append(slot)
+
+    return Response(free_slots)
+
+
 class MasterListView(APIView):
     def get(self, request, slug):
         company = get_object_or_404(Company, slug=slug)
@@ -25,9 +63,25 @@ class ServiceListView(APIView):
         company = get_object_or_404(Company, slug=slug)
         services = Service.objects.all()
         master_id = request.query_params.get('master')
+        date = request.query_params.get("date")
+        time = request.query_params.get("time")
+
         if master_id:
             master = get_object_or_404(Master, company=company, id=master_id)
             services = services.filter(masters=master)
+
+        elif date and time:
+            date = datetime.strptime(date, "%Y-%m-%d").date()
+            targeted_time = datetime.strptime(time, '%H:%M').time()
+
+            fitting_ids = []
+            for service in services:
+                for master in company.masters.filter(services=service):
+                    free = get_free_slots(date, master, service.duration)
+                    if targeted_time in free:
+                        fitting_ids.append(service.id)
+                        break
+            services = services.filter(id__in=fitting_ids)
 
         serializer = ServiceSerializer(services, many=True)
 
@@ -50,6 +104,7 @@ class AppointmentCreateView(generics.CreateAPIView):
         client = self.request.user if self.request.user.is_authenticated else None
 
         serializer.save(company=company, status='pending', end_time=end_dt.time(), client=client)
+
 
 
 class SelectData(APIView):
