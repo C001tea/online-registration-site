@@ -8,6 +8,7 @@ class Company(models.Model):
     address = models.CharField(max_length=300, blank=True)
     phone = models.CharField(max_length=20, blank=True)
     logo = models.ImageField(upload_to='logos/', blank=True, null=True)
+    main_photo = models.ImageField(upload_to='main_photos', blank=True, null=True)
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     description = models.TextField(blank=True)
