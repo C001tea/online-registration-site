@@ -30,7 +30,7 @@ class ServiceSerializer(serializers.ModelSerializer):
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
-        fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'latitude', 'longitude', 'description']
+        fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'main_photo', 'latitude', 'longitude', 'description']
 
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     class Meta:
