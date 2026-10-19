@@ -1,5 +1,5 @@
 import math
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.auth.validators import UnicodeUsernameValidator
@@ -121,10 +121,11 @@ def client_for_phone(phone):
 
 
 def calc_end_time(date, start_time, duration):
-    end = datetime.combine(date, start_time) + timedelta(minutes=duration)
-    if end.date() != date:
+    # Считаем в минутах, без datetime: для 9999-12-31 datetime + timedelta переполняется (500)
+    end_minutes = start_time.hour * 60 + start_time.minute + duration
+    if end_minutes >= 24 * 60:
         raise StaffError('Запись должна закончиться до полуночи')
-    return end.time()
+    return time(end_minutes // 60, end_minutes % 60, start_time.second)
 
 
 def check_visit_date(status_value, date):
@@ -232,6 +233,17 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
     def update(self, instance, validated_data):
         staff = self.context['staff']
         data = dict(validated_data)
+        with transaction.atomic():
+            # instance загружен до начала транзакции и мог устареть (параллельная отмена, перенос):
+            # всё считаем от свежей строки под блокировкой и пишем только изменённые поля
+            instance = Appointment.objects.select_for_update().get(pk=instance.pk)
+            if staff.role == 'master' and instance.master_id != staff.master.id:
+                # Запись успели перевести к другому мастеру
+                raise StaffError('Запись не найдена', status.HTTP_404_NOT_FOUND)
+            return self.apply_update(instance, data, staff)
+
+    def apply_update(self, instance, data, staff):
+        """Изменение записи; вызывается внутри transaction.atomic() с заблокированной instance."""
         old_duration = minutes_between(instance.start_time, instance.end_time)
         current = {
             'master': instance.master, 'service': instance.service, 'date': instance.date,
@@ -275,23 +287,27 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
             master is not None and status_value in BUSY_STATUSES
             and (master_changed or service_changed or timing_changed or instance.status not in BUSY_STATUSES)
         )
+        if need_overlap_check:
+            # Блокирует мастера (куда ставим запись) и проверяет пересечения
+            check_overlap(master, date, start_time, end_time, exclude_pk=instance.pk)
 
-        with transaction.atomic():
-            if need_overlap_check:
-                check_overlap(master, date, start_time, end_time, exclude_pk=instance.pk)
-            instance.master = master
-            instance.service = service
-            instance.date = date
-            instance.start_time = start_time
-            instance.end_time = end_time
-            instance.status = status_value
-            for field in ('client_name', 'client_email', 'notes'):
-                if field in changes:
-                    setattr(instance, field, changes[field])
-            if 'client_phone' in changes:
-                instance.client_phone = changes['client_phone']
-                instance.client = client_for_phone(instance.client_phone)
-            instance.save()
+        updates = {
+            'master': master, 'service': service, 'date': date, 'start_time': start_time,
+            'end_time': end_time, 'status': status_value,
+        }
+        for field in ('client_name', 'client_email', 'notes'):
+            if field in changes:
+                updates[field] = changes[field]
+        if 'client_phone' in changes:
+            updates['client_phone'] = changes['client_phone']
+            updates['client'] = client_for_phone(changes['client_phone'])
+
+        changed_fields = [field for field, value in updates.items() if getattr(instance, field) != value]
+        for field in changed_fields:
+            setattr(instance, field, updates[field])
+        if changed_fields:
+            # Только изменённые колонки: PATCH заметки не перезапишет статус или время
+            instance.save(update_fields=changed_fields)
         return instance
 
 
@@ -376,12 +392,16 @@ class ScheduleDaySerializer(serializers.Serializer):
     end_time = hhmm_field(required=False)
 
     def validate(self, attrs):
-        if attrs['is_working']:
-            start, end = attrs.get('start_time'), attrs.get('end_time')
-            if start is None or end is None:
-                raise serializers.ValidationError('укажите время начала и окончания')
-            if start >= end:
-                raise serializers.ValidationError('время начала должно быть раньше окончания')
+        start, end = attrs.get('start_time'), attrs.get('end_time')
+        if attrs['is_working'] and (start is None or end is None):
+            raise serializers.ValidationError('укажите время начала и окончания')
+        # Для нерабочего дня время можно не передавать — подставляем 09:00–18:00.
+        # Порядок проверяем для любого дня: иначе сохранится перевёрнутое время, и день потом
+        # нельзя будет просто отметить рабочим
+        attrs['start_time'] = start or DEFAULT_DAY_START
+        attrs['end_time'] = end or DEFAULT_DAY_END
+        if attrs['start_time'] >= attrs['end_time']:
+            raise serializers.ValidationError('время начала должно быть раньше окончания')
         return attrs
 
 

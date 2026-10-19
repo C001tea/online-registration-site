@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
+from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Max
@@ -16,30 +17,41 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from bookings.login_limit import is_login_blocked, register_login_failure, reset_login_failures, LOGIN_BLOCKED_MESSAGE
+from bookings.login_limit import (
+    LOGIN_BLOCKED_MESSAGE, increment_counter, is_login_blocked, login_limit_key,
+    register_login_failure, reset_login_failures,
+)
 from bookings.models import (
     AdminProfile, Appointment, ClientProfile, Master, MasterDayOff, MasterSchedule, Service, ServiceCategory
 )
 from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES, get_free_slots
 from .errors import StaffError
-from .permissions import (
-    IsStaff, IsStaffManagerOrReadOnly, get_staff, NO_STAFF_ACCESS_MESSAGE, NOT_ENOUGH_RIGHTS_MESSAGE
-)
+from .permissions import IsStaff, IsStaffManagerOrReadOnly, get_staff, NOT_ENOUGH_RIGHTS_MESSAGE
 from .serializers import (
-    PHONE_REGION, DAY_NAMES, DEFAULT_DAY_START, DEFAULT_DAY_END,
+    PHONE_REGION, DAY_NAMES,
     StaffLoginSerializer, PasswordChangeSerializer, StaffAppointmentSerializer, StaffAppointmentWriteSerializer,
     StaffCategorySerializer, StaffServiceSerializer, StaffMasterSerializer, ScheduleDaySerializer,
     DayOffInputSerializer, MasterAccessSerializer, StaffCompanySerializer,
     staff_me, schedule_days, day_off_data,
 )
-from .tokens import STAFF_SCOPE, StaffRefreshToken, get_staff_tokens
+from .tokens import STAFF_SCOPE, StaffRefreshToken, get_staff_tokens, token_matches_password
 
 STATUS_KEYS = [key for key, _ in Appointment.STATUS_CHOICES]
+CLIENT_ACCOUNT_MESSAGE = 'Это клиентский аккаунт — пароль меняет сам пользователь'
 # Журнал отдаётся без пагинации, поэтому диапазон дат ограничен
 MAX_JOURNAL_DAYS = 30
+# Список новых записей (бейдж «Новые»): без ограничения по дате, но не больше стольких строк
+MAX_PENDING_ITEMS = 200
+# Поиск клиента по телефону: не больше LOOKUP_LIMIT запросов в час на пользователя панели
+LOOKUP_LIMIT = 120
+LOOKUP_WINDOW_SECONDS = 60 * 60
+TOO_MANY_REQUESTS_MESSAGE = 'Слишком много запросов, попробуйте позже'
+PASSWORD_BLOCKED_MESSAGE = 'Слишком много попыток. Попробуйте через 15 минут'
+LOGIN_FAILED_MESSAGE = 'Неверный логин или пароль'
 
 
 def parse_date(value):
@@ -102,7 +114,9 @@ class StaffLoginView(APIView):
         username = serializer.validated_data['username']
         password = serializer.validated_data['password']
 
-        limit_key = f'staff-login:{username.strip().lower()}'
+        # Счётчик — по аккаунту, в который ведёт логин: любое написание телефона даёт один ключ,
+        # общий со входом клиента (/api/auth/login/). Проверяется до любой попытки authenticate().
+        limit_key = login_limit_key(username, PHONE_REGION)
         if is_login_blocked(limit_key):
             return Response({'error': LOGIN_BLOCKED_MESSAGE}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
@@ -112,13 +126,13 @@ class StaffLoginView(APIView):
             phone = normalize_phone(username, PHONE_REGION)
             if phone and phone != username:
                 user = authenticate(request, username=phone, password=password)
-        if user is None:
-            register_login_failure(limit_key)
-            return Response({'error': 'Неверный логин или пароль'}, status=status.HTTP_400_BAD_REQUEST)
 
-        staff = get_staff(user)
+        staff = get_staff(user) if user is not None else None
         if staff is None:
-            return Response({'error': NO_STAFF_ACCESS_MESSAGE}, status=status.HTTP_403_FORBIDDEN)
+            # Верный пароль от аккаунта без доступа к панели (например, клиентского) — тот же ответ
+            # и та же неудачная попытка: по этому эндпоинту нельзя проверять пароли клиентов
+            register_login_failure(limit_key)
+            return Response({'error': LOGIN_FAILED_MESSAGE}, status=status.HTTP_400_BAD_REQUEST)
 
         reset_login_failures(limit_key)
         return Response({**get_staff_tokens(user), 'me': staff_me(user, staff)})
@@ -131,6 +145,12 @@ class StaffTokenRefreshSerializer(TokenRefreshSerializer):
         refresh = self.token_class(attrs['refresh'])
         if refresh.get('scope') != STAFF_SCOPE:
             raise InvalidToken('Это не токен панели салона')
+        user = User.objects.filter(pk=refresh.get(api_settings.USER_ID_CLAIM)).first()
+        if user is None:
+            raise InvalidToken('Пользователь не найден')
+        if not token_matches_password(refresh, user):
+            # Пароль сменили или сбросили после выдачи токена
+            raise InvalidToken('Пароль изменён — войдите снова')
         try:
             return super().validate(attrs)
         except User.DoesNotExist:
@@ -149,13 +169,21 @@ class StaffPasswordView(APIView):
         serializer = PasswordChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = request.user
+        # Перебор текущего пароля с украденным токеном: не больше 5 неверных за 15 минут
+        limit_key = f'staff-password:{user.pk}'
+        if is_login_blocked(limit_key):
+            return Response({'error': PASSWORD_BLOCKED_MESSAGE}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         if not user.check_password(serializer.validated_data['old_password']):
+            register_login_failure(limit_key)
             raise ValidationError({'old_password': ['Неверный текущий пароль']})
+        reset_login_failures(limit_key)
         new_password = serializer.validated_data['new_password']
         password_errors('new_password', new_password, user)
         user.set_password(new_password)
         user.save(update_fields=['password'])
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        # Старые токены (в т.ч. на других устройствах) после смены пароля не действуют —
+        # тому, кто сменил пароль, выдаём новые, чтобы он остался в панели
+        return Response(get_staff_tokens(user))
 
 
 class StaffMeView(APIView):
@@ -216,10 +244,19 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
         appointment = serializer.save()
         return Response(StaffAppointmentSerializer(appointment).data)
 
+    def pending_queryset(self):
+        """Новые записи (бейдж «Новые»): ожидают подтверждения, с сегодняшнего дня и дальше."""
+        return self.get_queryset().filter(status='pending', date__gte=timezone.localdate())
+
+    @action(detail=False, methods=['get'])
+    def pending(self, request):
+        queryset = self.pending_queryset().order_by('date', 'start_time', 'id')[:MAX_PENDING_ITEMS]
+        return Response(self.get_serializer(queryset, many=True).data)
+
     @action(detail=False, methods=['get'], url_path='pending-count')
     def pending_count(self, request):
-        count = self.get_queryset().filter(status='pending', date__gte=timezone.localdate()).count()
-        return Response({'count': count})
+        # Тот же набор, что и в списке pending/ (список обрезается до MAX_PENDING_ITEMS)
+        return Response({'count': self.pending_queryset().count()})
 
 
 class FreeTimesView(APIView):
@@ -282,17 +319,30 @@ class ClientLookupView(APIView):
     permission_classes = [IsStaff]
 
     def get(self, request):
+        # Перебор телефонов: не больше LOOKUP_LIMIT запросов в час на пользователя панели
+        limit_key = f'lookup:{request.user.pk}'
+        if (cache.get(limit_key) or 0) >= LOOKUP_LIMIT:
+            raise StaffError(TOO_MANY_REQUESTS_MESSAGE, status.HTTP_429_TOO_MANY_REQUESTS)
+        increment_counter(limit_key, LOOKUP_WINDOW_SECONDS)
+
         phone = normalize_phone((request.query_params.get('phone') or '').strip(), PHONE_REGION)
         if not phone:
             raise ValidationError({'phone': ['Неверный номер телефона']})
 
-        profile = ClientProfile.objects.filter(phone=phone).first()
-        appointments = Appointment.objects.filter(company=request.staff.company, client_phone=phone)
+        company = request.staff.company
+        profile = ClientProfile.objects.filter(phone=phone).select_related('user').first()
+        appointments = Appointment.objects.filter(company=company, client_phone=phone)
         last = appointments.order_by('-date', '-start_time', '-id').first()
-        if not profile and not last:
+        # Данные отдаются, только если клиент уже записывался в этот салон: иначе по телефону
+        # можно было бы узнать, кто зарегистрирован на платформе, и имена клиентов других салонов
+        known = last is not None or (
+            profile is not None and Appointment.objects.filter(company=company, client=profile.user).exists()
+        )
+        if not known:
             raise StaffError('Клиент не найден', status.HTTP_404_NOT_FOUND)
 
-        name = f'{profile.name} {profile.surname}'.strip() if profile else last.client_name
+        profile_name = f'{profile.name} {profile.surname}'.strip() if profile else ''
+        name = profile_name or (last.client_name if last else '')
         last_visit = appointments.filter(status='completed').aggregate(last=Max('date'))['last']
         return Response({
             'phone': phone,
@@ -405,9 +455,9 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
                     master=master, day_of_week=row['day_of_week'],
                     defaults={
                         'is_working': row['is_working'],
-                        # Для нерабочего дня время можно не передавать
-                        'start_time': row.get('start_time') or DEFAULT_DAY_START,
-                        'end_time': row.get('end_time') or DEFAULT_DAY_END,
+                        # Пропущенное время нерабочего дня уже заменено на 09:00–18:00 (ScheduleDaySerializer)
+                        'start_time': row['start_time'],
+                        'end_time': row['end_time'],
                     },
                 )
 
@@ -446,6 +496,12 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
         if profile and (self.staff.role != 'owner' or profile.company_id != self.staff.company.id):
             raise StaffError(NOT_ENOUGH_RIGHTS_MESSAGE, status.HTTP_403_FORBIDDEN)
 
+    @staticmethod
+    def check_not_phone_username(username):
+        """Логин-телефон занял бы номер клиента: регистрация на сайте и вход клиента по нему сломаются."""
+        if username.startswith('+') or normalize_phone(username, PHONE_REGION) is not None:
+            raise ValidationError({'username': ['Логин не должен быть номером телефона']})
+
     @action(detail=True, methods=['post', 'delete'])
     def access(self, request, pk=None):
         master = self.get_object()
@@ -467,6 +523,7 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
 
         if user is None:
             # Никогда не привязываем существующие аккаунты (в т.ч. клиентские) — только новый
+            self.check_not_phone_username(username)
             if taken.exists():
                 raise ValidationError({'username': ['Этот логин уже занят']})
             password_errors('password', password, User(username=username))
@@ -476,12 +533,14 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
                 master.save(update_fields=['user'])
         else:
             self.check_can_manage_account(user)
+            if ClientProfile.objects.filter(user=user).exists():
+                # Клиентский аккаунт действует во всех салонах: сменой пароля или логина его можно
+                # было бы захватить (и записи клиента в других салонах). Отвязать (DELETE) — можно.
+                raise StaffError(CLIENT_ACCOUNT_MESSAGE, status.HTTP_403_FORBIDDEN)
             if username != user.username:
+                self.check_not_phone_username(username)
                 if taken.exclude(pk=user.pk).exists():
                     raise ValidationError({'username': ['Этот логин уже занят']})
-                if ClientProfile.objects.filter(user=user).exists():
-                    # Логин клиента — его телефон: после переименования он не сможет войти на сайт
-                    raise ValidationError({'username': ['Это клиентский аккаунт (вход по телефону) — логин менять нельзя']})
                 user.username = username
             password_errors('password', password, user)
             user.set_password(password)

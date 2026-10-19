@@ -1,17 +1,18 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 from bookings.models import AdminProfile, Company, Master
-from .tokens import STAFF_SCOPE
+from .tokens import STAFF_SCOPE, token_matches_password
 
 MANAGER_ROLES = ('owner', 'admin')
 
 NO_STAFF_TOKEN_MESSAGE = 'Нужен вход в панель салона'
 NO_STAFF_ACCESS_MESSAGE = 'У этого аккаунта нет доступа к панели салона'
 NOT_ENOUGH_RIGHTS_MESSAGE = 'Недостаточно прав'
+SESSION_EXPIRED_MESSAGE = 'Сессия устарела, войдите снова'
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,9 @@ class IsStaff(BasePermission):
             return False
         if request.auth is None or request.auth.get('scope') != STAFF_SCOPE:
             raise PermissionDenied({'error': NO_STAFF_TOKEN_MESSAGE})
+        if not token_matches_password(request.auth, request.user):
+            # Пароль сменили или сбросили после выдачи токена → 401, фронт выходит из панели
+            raise AuthenticationFailed({'error': SESSION_EXPIRED_MESSAGE})
         staff = get_staff(request.user)
         if staff is None:
             raise PermissionDenied({'error': NO_STAFF_ACCESS_MESSAGE})
