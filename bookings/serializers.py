@@ -86,6 +86,15 @@ class ReviewSerializer(serializers.ModelSerializer):
         fields = ['id', 'client_name', 'rating', 'comment', 'created_at']
         read_only_fields = ['id', 'client_name', 'created_at']
 
+    def validate_rating(self, value):
+        if not 1 <= value <= 5:
+            raise serializers.ValidationError('Оценка должна быть от 1 до 5')
+        return value
+
     def get_client_name(self, obj):
-        return f"{obj.client.profile.name} {obj.client.profile.surname}"
+        # У пользователей, созданных не через регистрацию (например, админа), профиля нет
+        profile = getattr(obj.client, 'profile', None)
+        if not profile:
+            return obj.client.username
+        return f"{profile.name} {profile.surname}".strip()
 

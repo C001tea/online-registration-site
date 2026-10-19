@@ -1,6 +1,7 @@
 from datetime import date, datetime, time, timedelta
 from unittest import mock
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -149,3 +150,63 @@ class ListViewsTests(BookingTestCase):
             f'/api/companies/{self.company.slug}/services/', {'date': self.day.isoformat(), 'time': '11:30'}
         )
         self.assertEqual(response.data, [])  # 60 минут после 11:30 не помещаются
+
+
+class ClientAccountTests(BookingTestCase):
+    def setUp(self):
+        super().setUp()
+        response = self.client.post('/api/auth/register/', {
+            'phone': '+37369123456', 'password': 'secret-pass-1', 'name': 'Ирина'
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
+
+    def make_appointment(self, day, status='pending', start=time(10)):
+        return Appointment.objects.create(
+            company=self.company, master=self.master, service=self.service, client_name='Ирина',
+            client_phone='+37369123456', date=day, start_time=start, end_time=time(11),
+            status=status, client=self.user()
+        )
+
+    def user(self):
+        return User.objects.get(username='+37369123456')
+
+    def test_my_appointments_survive_deleted_master(self):
+        appointment = self.make_appointment(self.day)
+        self.master.delete()
+        response = self.client.get('/api/appointments/my/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data[0]['master'])
+        self.assertEqual(response.data[0]['id'], appointment.id)
+
+    def test_cancel_future_appointment(self):
+        appointment = self.make_appointment(self.day)
+        response = self.client.post(f'/api/appointments/{appointment.id}/cancel/')
+        self.assertEqual(response.status_code, 200)
+        appointment.refresh_from_db()
+        self.assertEqual(appointment.status, 'cancelled')
+        # Повторная отмена
+        self.assertEqual(self.client.post(f'/api/appointments/{appointment.id}/cancel/').status_code, 400)
+
+    def test_cannot_cancel_past_appointment(self):
+        appointment = self.make_appointment(timezone.localdate() - timedelta(days=1))
+        self.assertEqual(self.client.post(f'/api/appointments/{appointment.id}/cancel/').status_code, 400)
+
+    def review(self, rating=5):
+        return self.client.post(
+            f'/api/companies/{self.company.slug}/master/{self.master.id}/reviews/',
+            {'rating': rating, 'comment': 'Супер'}, format='json'
+        )
+
+    def test_review_requires_visit(self):
+        self.assertEqual(self.review().status_code, 403)
+        self.make_appointment(self.day)  # будущая запись — ещё не визит
+        self.assertEqual(self.review().status_code, 403)
+
+    def test_review_after_visit(self):
+        self.make_appointment(timezone.localdate() - timedelta(days=1))
+        self.assertEqual(self.review(rating=6).status_code, 400)
+        response = self.review()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['client_name'], 'Ирина')
+        self.assertEqual(self.review().status_code, 400)  # второй отзыв

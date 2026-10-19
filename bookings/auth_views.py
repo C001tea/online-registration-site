@@ -6,6 +6,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import ClientProfile, Appointment
 from .phone import normalize_phone
 from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
+from datetime import datetime
 
 def get_token_for_user(user):
     refresh = RefreshToken.for_user(user)
@@ -90,17 +92,19 @@ class MyAppointmentView(APIView):
     def get(self, request):
         appointments = Appointment.objects.filter(
             client=request.user
-        ).order_by('-date', '-start_time')
+        ).select_related('master', 'service').order_by('-date', '-start_time')
 
         data = []
 
+        # Мастер или услуга могли быть удалены (SET_NULL) — раньше это давало 500
         for apt in appointments:
             data.append({
                 "id": apt.id,
-                "master": apt.master.name,
-                "service": apt.service.name,
+                "master": apt.master.name if apt.master else None,
+                "service": apt.service.name if apt.service else None,
                 "date": apt.date,
                 "start_time": apt.start_time,
+                "end_time": apt.end_time,
                 "status": apt.status
             })
         return Response(data)
@@ -120,9 +124,16 @@ class CancelAppointmentsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        if appointment.status in ['cancellled', 'completed']:
+        if appointment.status in ['cancelled', 'completed']:
             return Response(
                 {'error': 'Эту запись нельзя отменить'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        starts_at = timezone.make_aware(datetime.combine(appointment.date, appointment.start_time))
+        if starts_at <= timezone.now():
+            return Response(
+                {'error': 'Прошедшую запись нельзя отменить'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 

@@ -4,11 +4,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from .models import Company, Master, Service, Review
+from .models import Company, Master, Service, Review, Appointment
 from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
 from .slots import get_free_slots
 from datetime import datetime, timedelta
-from django.db.models import Avg
+from django.db.models import Avg, Q
+from django.utils import timezone
 
 
 def parse_date(value):
@@ -181,7 +182,18 @@ class ReviewView(APIView):
 
         if Review.objects.filter(master=master, client=request.user).exists():
             return Response(
-                {'error': 'Вы уже оставили отзыв на этого мастера'}
+                {'error': 'Вы уже оставили отзыв на этого мастера'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Отзыв может оставить только клиент, который уже был у мастера
+        visited = Appointment.objects.filter(master=master, client=request.user).filter(
+            Q(status='completed') | Q(date__lt=timezone.localdate(), status__in=['pending', 'confirmed'])
+        ).exists()
+        if not visited:
+            return Response(
+                {'error': 'Отзыв можно оставить после визита к мастеру'},
+                status=status.HTTP_403_FORBIDDEN
             )
 
         serializer = ReviewSerializer(data=request.data)
