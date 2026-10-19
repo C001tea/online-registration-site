@@ -1,3 +1,151 @@
-from django.test import TestCase
+from datetime import date, datetime, time, timedelta
+from unittest import mock
 
-# Create your tests here.
+from django.test import TestCase
+from django.utils import timezone
+from rest_framework.test import APIClient
+
+from .models import Company, Master, Service, Appointment, MasterSchedule
+from .slots import get_free_slots
+
+
+def make_company(slug='salon'):
+    company = Company.objects.create(name=slug, slug=slug)
+    service = Service.objects.create(company=company, name='Маникюр', duration=60, price=300)
+    master = Master.objects.create(company=company, name='Анна')
+    master.services.add(service)
+    for day in range(7):
+        MasterSchedule.objects.create(master=master, day_of_week=day, start_time=time(9), end_time=time(12))
+    return company, service, master
+
+
+class BookingTestCase(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.company, self.service, self.master = make_company()
+        self.day = timezone.localdate() + timedelta(days=7)
+
+    def book(self, **overrides):
+        payload = {
+            'master': self.master.id,
+            'service': self.service.id,
+            'client_name': 'Ирина',
+            'client_phone': '+37369123456',
+            'date': self.day.isoformat(),
+            'start_time': '10:00',
+        }
+        payload.update(overrides)
+        payload = {k: v for k, v in payload.items() if v is not None}
+        return self.client.post(f'/api/companies/{self.company.slug}/appointments/', payload, format='json')
+
+
+class FreeSlotsTests(BookingTestCase):
+    def test_slots_follow_schedule_and_duration(self):
+        slots = get_free_slots(self.master, self.day, 60)
+        self.assertEqual(slots, [time(9), time(9, 30), time(10), time(10, 30), time(11)])
+
+    def test_busy_time_is_excluded(self):
+        Appointment.objects.create(
+            company=self.company, master=self.master, service=self.service, client_name='x',
+            client_phone='x', date=self.day, start_time=time(10), end_time=time(11)
+        )
+        self.assertEqual(get_free_slots(self.master, self.day, 60), [time(9), time(11)])
+
+    def test_cancelled_appointment_frees_time(self):
+        Appointment.objects.create(
+            company=self.company, master=self.master, service=self.service, client_name='x',
+            client_phone='x', date=self.day, start_time=time(10), end_time=time(11), status='cancelled'
+        )
+        self.assertIn(time(10), get_free_slots(self.master, self.day, 60))
+
+    def test_past_date_has_no_slots(self):
+        self.assertEqual(get_free_slots(self.master, timezone.localdate() - timedelta(days=1), 60), [])
+
+    def test_past_time_today_is_excluded(self):
+        today = date(2030, 1, 7)
+        now = timezone.make_aware(datetime(2030, 1, 7, 10, 15))
+        with mock.patch('bookings.slots.timezone.localdate', return_value=today), \
+                mock.patch('bookings.slots.timezone.localtime', return_value=now):
+            self.assertEqual(get_free_slots(self.master, today, 60), [time(10, 30), time(11)])
+
+    def test_day_off_has_no_slots(self):
+        MasterSchedule.objects.filter(master=self.master, day_of_week=self.day.weekday()).update(is_working=False)
+        self.assertEqual(get_free_slots(self.master, self.day, 60), [])
+
+
+class AppointmentCreateTests(BookingTestCase):
+    def test_creates_appointment_with_end_time(self):
+        response = self.book()
+        self.assertEqual(response.status_code, 201, response.data)
+        appointment = Appointment.objects.get()
+        self.assertEqual(appointment.end_time, time(11))
+        self.assertEqual(appointment.client_phone, '+37369123456')
+
+    def test_rejects_taken_time(self):
+        self.assertEqual(self.book().status_code, 201)
+        response = self.book(start_time='10:30')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Appointment.objects.count(), 1)
+
+    def test_rejects_time_outside_schedule(self):
+        self.assertEqual(self.book(start_time='03:00').status_code, 400)
+        self.assertEqual(self.book(start_time='11:30').status_code, 400)  # 11:30 + 60 мин > 12:00
+
+    def test_rejects_past_date(self):
+        response = self.book(date=(timezone.localdate() - timedelta(days=1)).isoformat())
+        self.assertEqual(response.status_code, 400)
+
+    def test_rejects_master_from_other_company(self):
+        _, _, other_master = make_company('other')
+        other_master.services.add(self.service)
+        self.assertEqual(self.book(master=other_master.id).status_code, 400)
+
+    def test_rejects_master_without_service(self):
+        other_service = Service.objects.create(company=self.company, name='Педикюр', duration=60, price=400)
+        self.assertEqual(self.book(service=other_service.id).status_code, 400)
+
+    def test_rejects_invalid_phone(self):
+        self.assertEqual(self.book(client_phone='123').status_code, 400)
+
+    def test_any_master_is_assigned_to_free_one(self):
+        second = Master.objects.create(company=self.company, name='Мария')
+        second.services.add(self.service)
+        MasterSchedule.objects.create(master=second, day_of_week=self.day.weekday(), start_time=time(9), end_time=time(12))
+        self.assertEqual(self.book().status_code, 201)
+
+        response = self.book(master=None)
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Appointment.objects.latest('id').master, second)
+
+        self.assertEqual(self.book(master=None).status_code, 400)  # оба заняты
+
+
+class ListViewsTests(BookingTestCase):
+    def test_masters_only_from_company_and_active(self):
+        make_company('other')
+        Master.objects.create(company=self.company, name='Уволена', is_active=False)
+        response = self.client.get(f'/api/companies/{self.company.slug}/masters/')
+        self.assertEqual([m['name'] for m in response.data], ['Анна'])
+
+    def test_inactive_services_hidden(self):
+        Service.objects.create(company=self.company, name='Архив', duration=30, price=1, is_active=False)
+        response = self.client.get(f'/api/companies/{self.company.slug}/services/')
+        self.assertEqual([s['name'] for s in response.data], ['Маникюр'])
+
+    def test_slots_endpoint(self):
+        response = self.client.get(
+            f'/api/companies/{self.company.slug}/slots/',
+            {'master': self.master.id, 'service': self.service.id, 'date': self.day.isoformat()}
+        )
+        self.assertEqual(response.data['slots'], ['09:00', '09:30', '10:00', '10:30', '11:00'])
+
+    def test_points_requires_valid_date(self):
+        self.assertEqual(self.client.get(f'/api/companies/{self.company.slug}/points/').status_code, 400)
+        response = self.client.get(f'/api/companies/{self.company.slug}/points/', {'date': self.day.isoformat()})
+        self.assertEqual(response.data, ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30'])
+
+    def test_services_by_time(self):
+        response = self.client.get(
+            f'/api/companies/{self.company.slug}/services/', {'date': self.day.isoformat(), 'time': '11:30'}
+        )
+        self.assertEqual(response.data, [])  # 60 минут после 11:30 не помещаются

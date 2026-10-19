@@ -1,58 +1,30 @@
 from rest_framework import generics, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.db import transaction
 from django.shortcuts import get_object_or_404
-from .models import Company, Master, Appointment, Service, MasterSchedule, Review
+from .models import Company, Master, Service, Review
 from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
+from .slots import get_free_slots
 from datetime import datetime, timedelta
 from django.db.models import Avg
 
 
-
-def get_free_slots(date, master, duration_time):
-
-
+def parse_date(value):
     try:
-        schedule = MasterSchedule.objects.get(master=master, day_of_week=date.weekday(), is_working=True)
-    except MasterSchedule.DoesNotExist:
-        return []
-
-    duration = timedelta(minutes=duration_time)
-
-    busy = Appointment.objects.filter(
-        master=master,
-        date=date,
-        status__in=['pending', 'confirmed']
-    ).values_list('start_time', 'end_time')
-
-    slots = []
-    current = datetime.combine(date, schedule.start_time)
-    end = datetime.combine(date, schedule.end_time)
-    while duration + current <= end:
-        slots.append(current.time())
-        current += timedelta(minutes=30)
-
-    free_slots = []
-    for slot in slots:
-        slot_start = datetime.combine(date, slot)
-        slot_end = slot_start + duration
-
-        is_busy = any(datetime.combine(date, busy_start) < slot_end and datetime.combine(date, busy_end) > slot_start
-                      for busy_start, busy_end in busy)
-
-        if not is_busy:
-            free_slots.append(slot)
-
-    return free_slots
+        return datetime.strptime(value or '', '%Y-%m-%d').date()
+    except ValueError:
+        return None
 
 
 class MasterListView(APIView):
     def get(self, request, slug):
         company = get_object_or_404(Company, slug=slug)
-        masters = Master.objects.all()
+        masters = company.masters.filter(is_active=True)
         service_id = request.query_params.get('service')
         if service_id:
-            service = get_object_or_404(Service, company=company, id=service_id)
+            service = get_object_or_404(Service, company=company, id=service_id, is_active=True)
             masters = masters.filter(services=service)
 
         serializer = MasterSerializer(masters, many=True)
@@ -61,24 +33,28 @@ class MasterListView(APIView):
 class ServiceListView(APIView):
     def get(self, request, slug):
         company = get_object_or_404(Company, slug=slug)
-        services = company.services.all()
+        services = company.services.filter(is_active=True)
         master_id = request.query_params.get('master_id')
         date = request.query_params.get("date")
         time = request.query_params.get("time")
 
         if master_id:
-            master = get_object_or_404(Master, company=company, id=master_id)
+            master = get_object_or_404(Master, company=company, id=master_id, is_active=True)
             services = services.filter(masters=master)
 
         elif date and time:
-            date = datetime.strptime(date, "%Y-%m-%d").date()
-            targeted_time = datetime.strptime(time, '%H:%M').time()
+            date = parse_date(date)
+            try:
+                targeted_time = datetime.strptime(time, '%H:%M').time()
+            except ValueError:
+                targeted_time = None
+            if not date or not targeted_time:
+                return Response({"error": "Format: date=YYYY-MM-DD, time=HH:MM"}, status=status.HTTP_400_BAD_REQUEST)
 
             fitting_ids = []
             for service in services:
-                for master in company.masters.filter(services=service):
-                    free = get_free_slots(date, master, service.duration)
-                    if targeted_time in free:
+                for master in company.masters.filter(services=service, is_active=True):
+                    if targeted_time in get_free_slots(master, date, service.duration):
                         fitting_ids.append(service.id)
                         break
             services = services.filter(id__in=fitting_ids)
@@ -91,65 +67,54 @@ class ServiceListView(APIView):
 class AppointmentCreateView(generics.CreateAPIView):
     serializer_class = AppointmentCreateSerializer
 
+    def get_company(self):
+        if not hasattr(self, '_company'):
+            self._company = get_object_or_404(Company, slug=self.kwargs['slug'])
+        return self._company
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['company'] = self.get_company()
+        return context
+
     def perform_create(self, serializer):
-        company = get_object_or_404(Company, slug=self.kwargs['slug'])
+        data = serializer.validated_data
+        service = data['service']
 
-        service = serializer.validated_data['service']
-        start_time = serializer.validated_data['start_time']
-        date = serializer.validated_data['date']
+        # Блокируем мастера, чтобы два одновременных запроса не заняли одно время
+        with transaction.atomic():
+            master = Master.objects.select_for_update().get(pk=data['master'].pk)
+            if data['start_time'] not in get_free_slots(master, data['date'], service.duration):
+                raise ValidationError({'non_field_errors': ['Это время уже заняли. Выберите другое.']})
 
-        start_dt = datetime.combine(date, start_time)
-        end_dt = start_dt + timedelta(minutes=service.duration)
+            end_dt = datetime.combine(data['date'], data['start_time']) + timedelta(minutes=service.duration)
+            client = self.request.user if self.request.user.is_authenticated else None
 
-        client = self.request.user if self.request.user.is_authenticated else None
-
-        serializer.save(company=company, status='pending', end_time=end_dt.time(), client=client)
+            serializer.save(
+                company=self.get_company(),
+                master=master,
+                status='pending',
+                end_time=end_dt.time(),
+                client=client
+            )
 
 
 
 class SelectData(APIView):
+    """Свободное время салона без привязки к услуге (окна по 30 минут)."""
+
     def get(self, request, slug):
-        all_free_points = set()
         company = get_object_or_404(Company, slug=slug)
-        masters = Master.objects.filter(company=company)
-        date = request.query_params.get('date')
-        try:
-            date = datetime.strptime(date, '%Y-%m-%d').date()
-        except ValueError:
+        date = parse_date(request.query_params.get('date'))
+        if not date:
             return Response({"error": "Date format: YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
-        duration = timedelta(minutes=30)
 
-        for master in masters.prefetch_related("appointments").all():
-            try:
-                schedule = MasterSchedule.objects.get(master=master, day_of_week=date.weekday(), is_working=True)
-            except MasterSchedule.DoesNotExist:
-                continue
+        all_free_points = set()
+        for master in company.masters.filter(is_active=True):
+            for slot in get_free_slots(master, date, 30):
+                all_free_points.add(slot.strftime('%H:%M'))
 
-            busy = Appointment.objects.filter(
-                master=master,
-                date=date,
-                status__in=['pending', 'confirmed']
-            ).values_list('start_time', 'end_time')
-
-            slots = []
-            current = datetime.combine(date, schedule.start_time)
-            end = datetime.combine(date, schedule.end_time)
-            while duration + current <= end:
-                slots.append(current.time())
-                current += timedelta(minutes=30)
-
-            for slot in slots:
-                slot_start = datetime.combine(date, slot)
-                slot_end = slot_start + duration
-
-                is_busy = any(datetime.combine(date, busy_start) < slot_end and datetime.combine(date, busy_end) > slot_start
-                              for busy_start, busy_end in busy)
-
-                if not is_busy:
-                    all_free_points.add(slot.strftime('%H:%M'))
-
-        free_points = sorted(all_free_points)
-        return Response(free_points)
+        return Response(sorted(all_free_points))
 
 class SlotListView(APIView):
     def get(self, request, slug):
@@ -162,53 +127,14 @@ class SlotListView(APIView):
         if not all([master_id, service_id, date_str]):
             return Response({'error': 'Specify master, service and date'}, status=status.HTTP_400_BAD_REQUEST)
 
+        master = get_object_or_404(Master, id=master_id, company=company, is_active=True)
+        service = get_object_or_404(Service, id=service_id, company=company, is_active=True)
 
-        master = get_object_or_404(Master, id=master_id, company=company)
-        service = get_object_or_404(Service, id=service_id, company=company)
-
-        try:
-            date = datetime.strptime(date_str, '%Y-%m-%d').date()
-        except ValueError:
+        date = parse_date(date_str)
+        if not date:
             return Response({"error": "Date format: YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
 
-
-        day_of_week = date.weekday()
-
-        try:
-            schedule = MasterSchedule.objects.get(master=master, day_of_week=day_of_week, is_working=True)
-        except MasterSchedule.DoesNotExist:
-            return Response({'date': date_str, 'slots': []})
-
-        slots = []
-        current = datetime.combine(date, schedule.start_time)
-        end = datetime.combine(date, schedule.end_time)
-        duration = timedelta(minutes=service.duration)
-        while duration + current <= end:
-            slots.append(current.time())
-            current += timedelta(minutes=30)
-
-        busy = Appointment.objects.filter(
-            master=master,
-            date=date,
-            status__in=['pending', 'confirmed']
-        ).values_list('start_time', 'end_time')
-
-        free_slots = []
-        for slot in slots:
-            slot_start = datetime.combine(date, slot)
-            slot_end = slot_start + duration
-
-            is_busy = False
-            for busy_start, busy_end in busy:
-                busy_start_dt = datetime.combine(date, busy_start)
-                busy_end_dt = datetime.combine(date, busy_end)
-
-                if busy_end_dt > slot_start and slot_end > busy_start_dt:
-                    is_busy = True
-                    break
-
-            if not is_busy:
-                free_slots.append(slot.strftime('%H:%M'))
+        free_slots = [slot.strftime('%H:%M') for slot in get_free_slots(master, date, service.duration)]
 
         return Response({
             'date': date_str,
@@ -270,5 +196,5 @@ class MasterServices(generics.ListAPIView):
 
     def get_queryset(self):
         company = get_object_or_404(Company, slug=self.kwargs['slug'])
-        master = get_object_or_404(Master, id=self.kwargs['master_id'], company=company)
-        return master.services.all()
+        master = get_object_or_404(Master, id=self.kwargs['master_id'], company=company, is_active=True)
+        return master.services.filter(is_active=True)

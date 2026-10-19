@@ -1,11 +1,10 @@
 from django.contrib.auth.models import User
-from phonenumbers.phonenumberutil import NumberParseException
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import ClientProfile, Appointment
-import phonenumbers
+from .phone import normalize_phone
 from rest_framework.permissions import IsAuthenticated
 
 def get_token_for_user(user):
@@ -14,15 +13,6 @@ def get_token_for_user(user):
         'refresh': str(refresh),
         'access': str(refresh.access_token)
     }
-
-def normalize_phone(phone):
-    try:
-        parsed = phonenumbers.parse(phone, None)
-        if not phonenumbers.is_valid_number(parsed):
-            return None
-        return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
-    except NumberParseException:
-        return None
 
 class RegisterView(APIView):
     def post(self, request):

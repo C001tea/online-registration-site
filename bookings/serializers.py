@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from .models import Company, Service, ServiceCategory, Master, Appointment, Review
-from datetime import datetime, timedelta
 from django.db.models import Avg
+from .phone import normalize_phone
+from .slots import get_free_slots
 
 class MasterSerializer(serializers.ModelSerializer):
     reviews_count = serializers.SerializerMethodField()
@@ -33,31 +34,46 @@ class CompanySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'main_photo', 'latitude', 'longitude', 'description']
 
 class AppointmentCreateSerializer(serializers.ModelSerializer):
+    # master не обязателен: без него назначается первый свободный мастер услуги
+    master = serializers.PrimaryKeyRelatedField(queryset=Master.objects.all(), required=False, allow_null=True)
+    service = serializers.PrimaryKeyRelatedField(queryset=Service.objects.all())
+
     class Meta:
         model = Appointment
         fields = ['master', 'service', 'client_name', 'client_phone', 'client_email', 'date', 'start_time', 'notes']
 
+    def validate_client_phone(self, value):
+        phone = normalize_phone(value)
+        if not phone:
+            raise serializers.ValidationError('Неверный формат номера телефона')
+        return phone
+
     def validate(self, data):
-        master = data['master']
+        company = self.context['company']
+        service = data['service']
+        master = data.get('master')
         date = data['date']
         start_time = data['start_time']
-        service = data['service']
 
-        start_dt = datetime.combine(date, start_time)
-        end_dt = start_dt + timedelta(minutes=service.duration)
+        if service.company_id != company.id or not service.is_active:
+            raise serializers.ValidationError({'service': 'Услуга не найдена.'})
 
-        conflict = Appointment.objects.filter(
-            master=master,
-            date=date,
-            status__in=['pending', 'confirmed'],
-            start_time__lt=end_dt.time(),
-            end_time__gt=start_dt.time()
-        ).exists()
-
-        if conflict:
-            raise serializers.ValidationError(
-                'Окошко уже занято.'
+        if master:
+            if master.company_id != company.id or not master.is_active:
+                raise serializers.ValidationError({'master': 'Мастер не найден.'})
+            if not master.services.filter(id=service.id).exists():
+                raise serializers.ValidationError('Мастер не оказывает эту услугу.')
+            if start_time not in get_free_slots(master, date, service.duration):
+                raise serializers.ValidationError('Это время недоступно. Выберите другое.')
+        else:
+            candidates = company.masters.filter(services=service, is_active=True)
+            master = next(
+                (m for m in candidates if start_time in get_free_slots(m, date, service.duration)),
+                None
             )
+            if not master:
+                raise serializers.ValidationError('На это время нет свободных мастеров.')
+            data['master'] = master
 
         return data
 
