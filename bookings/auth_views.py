@@ -1,12 +1,13 @@
 from django.contrib.auth.models import User
-from phonenumbers.phonenumberutil import NumberParseException
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import ClientProfile, Appointment
-import phonenumbers
+from .phone import normalize_phone
 from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
+from datetime import datetime
 
 def get_token_for_user(user):
     refresh = RefreshToken.for_user(user)
@@ -14,15 +15,6 @@ def get_token_for_user(user):
         'refresh': str(refresh),
         'access': str(refresh.access_token)
     }
-
-def normalize_phone(phone):
-    try:
-        parsed = phonenumbers.parse(phone, None)
-        if not phonenumbers.is_valid_number(parsed):
-            return None
-        return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
-    except NumberParseException:
-        return None
 
 class RegisterView(APIView):
     def post(self, request):
@@ -100,17 +92,19 @@ class MyAppointmentView(APIView):
     def get(self, request):
         appointments = Appointment.objects.filter(
             client=request.user
-        ).order_by('-date', '-start_time')
+        ).select_related('master', 'service').order_by('-date', '-start_time')
 
         data = []
 
+        # Мастер или услуга могли быть удалены (SET_NULL) — раньше это давало 500
         for apt in appointments:
             data.append({
                 "id": apt.id,
-                "master": apt.master.name,
-                "service": apt.service.name,
+                "master": apt.master.name if apt.master else None,
+                "service": apt.service.name if apt.service else None,
                 "date": apt.date,
                 "start_time": apt.start_time,
+                "end_time": apt.end_time,
                 "status": apt.status
             })
         return Response(data)
@@ -130,9 +124,16 @@ class CancelAppointmentsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        if appointment.status in ['cancellled', 'completed']:
+        if appointment.status in ['cancelled', 'completed']:
             return Response(
                 {'error': 'Эту запись нельзя отменить'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        starts_at = timezone.make_aware(datetime.combine(appointment.date, appointment.start_time))
+        if starts_at <= timezone.now():
+            return Response(
+                {'error': 'Прошедшую запись нельзя отменить'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 

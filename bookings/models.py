@@ -120,7 +120,7 @@ class Review(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.client.name} - {self.master.name} - {self.rating}"
+        return f"{self.client.username} - {self.master.name} - {self.rating}"
 
 
 class AdminProfile(models.Model):

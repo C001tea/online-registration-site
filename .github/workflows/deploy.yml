@@ -15,6 +15,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
             cd online-registration-site
-            
             git pull origin main
+            # gunicorn не перезагружает код сам: пересобираем и перезапускаем контейнер
+            docker compose up -d --build web
+            docker image prune -f

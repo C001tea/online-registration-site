@@ -13,8 +13,10 @@ services:
 
   web:
     build: .
+    depends_on:
+      - db
     container_name: django_salon_tools
-    command: python manage.py runserver 0.0.0.0:8000
+    # Миграции, collectstatic и gunicorn — в docker-entrypoint.sh
     ports:
       - "80:8000"
     volumes:
