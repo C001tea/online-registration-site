@@ -126,8 +126,11 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 # Адреса фронтенда через запятую: CORS_ALLOWED_ORIGINS=https://jcnails.md,http://localhost:5173
+# '*' — разрешить всех (django-cors-headers не принимает '*' в списке и падает при старте)
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOW_ALL_ORIGINS = DEBUG or '*' in CORS_ALLOWED_ORIGINS
+if '*' in CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS = []
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=7),
