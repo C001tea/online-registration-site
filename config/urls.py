@@ -20,5 +20,6 @@ from django.urls import path, include
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('bookings.urls')),
-    path('<uuid:user_token>/dashboard/', include('dashboard.urls')),
+    # API панели салона (персонал: владелец, администраторы, мастера)
+    path('api/staff/', include('dashboard.urls')),
 ]

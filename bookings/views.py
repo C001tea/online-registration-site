@@ -6,7 +6,7 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from .models import Company, Master, Service, Review, Appointment
 from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
-from .slots import get_free_slots
+from .slots import get_free_slots, ACTIVE_STATUSES
 from datetime import datetime, timedelta
 from django.db.models import Avg, Q
 from django.utils import timezone
@@ -128,14 +128,18 @@ class SlotListView(APIView):
         if not all([master_id, service_id, date_str]):
             return Response({'error': 'Specify master, service and date'}, status=status.HTTP_400_BAD_REQUEST)
 
-        master = get_object_or_404(Master, id=master_id, company=company, is_active=True)
-        service = get_object_or_404(Service, id=service_id, company=company, is_active=True)
+        if not str(master_id).isdecimal() or not str(service_id).isdecimal():
+            return Response({'error': 'Specify master, service and date'}, status=status.HTTP_400_BAD_REQUEST)
+        master = get_object_or_404(Master, id=master_id, company=company)
+        service = get_object_or_404(Service, id=service_id, company=company)
 
         date = parse_date(date_str)
         if not date:
             return Response({"error": "Date format: YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
 
-        free_slots = [slot.strftime('%H:%M') for slot in get_free_slots(master, date, service.duration)]
+        # Скрытый мастер/услуга или мастер не оказывает услугу — записаться нельзя
+        bookable = master.is_active and service.is_active and master.services.filter(id=service.id).exists()
+        free_slots = [slot.strftime('%H:%M') for slot in get_free_slots(master, date, service.duration)] if bookable else []
 
         return Response({
             'date': date_str,
@@ -180,15 +184,23 @@ class ReviewView(APIView):
         company = get_object_or_404(Company, slug=slug)
         master = get_object_or_404(Master, id=master_id, company=company)
 
+        if master.user_id == request.user.id:
+            return Response(
+                {'error': 'Нельзя оставить отзыв самому себе'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         if Review.objects.filter(master=master, client=request.user).exists():
             return Response(
                 {'error': 'Вы уже оставили отзыв на этого мастера'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Отзыв может оставить только клиент, который уже был у мастера
+        # Отзыв может оставить только клиент, который уже был у мастера.
+        # Запись, созданную персоналом, считаем визитом только после отметки «пришёл»
         visited = Appointment.objects.filter(master=master, client=request.user).filter(
-            Q(status='completed') | Q(date__lt=timezone.localdate(), status__in=['pending', 'confirmed'])
+            Q(status='completed')
+            | Q(date__lt=timezone.localdate(), status__in=ACTIVE_STATUSES, created_by_staff=False)
         ).exists()
         if not visited:
             return Response(

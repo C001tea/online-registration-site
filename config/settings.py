@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'bookings',
+    'dashboard',
 ]
 
 MIDDLEWARE = [
@@ -110,7 +111,8 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+# Стандартные сообщения Django/DRF об ошибках — на русском
+LANGUAGE_CODE = 'ru'
 
 # Время записей и графиков мастеров — местное
 TIME_ZONE = 'Europe/Chisinau'

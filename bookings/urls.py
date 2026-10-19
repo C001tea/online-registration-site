@@ -14,5 +14,6 @@ urlpatterns = [
     path('appointments/my/', auth_views.MyAppointmentView.as_view()),
     path('appointments/<int:appointment_id>/cancel/', auth_views.CancelAppointmentsView.as_view()),
     path('auth/register/', auth_views.RegisterView.as_view(), name='register'),
-    path('auth/login/', auth_views.LoginView.as_view(), name='login')
+    path('auth/login/', auth_views.LoginView.as_view(), name='login'),
+    path('auth/me/', auth_views.MeView.as_view(), name='me'),
 ]

@@ -5,6 +5,8 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import ClientProfile, Appointment
 from .phone import normalize_phone
+from .slots import ACTIVE_STATUSES
+from .login_limit import is_login_blocked, register_login_failure, reset_login_failures, LOGIN_BLOCKED_MESSAGE
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from datetime import datetime
@@ -69,22 +71,34 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        try:
-            user = User.objects.get(username=phone)
-        except User.DoesNotExist:
+        # Лимит перебора: не больше 5 неудачных попыток за 15 минут на один номер
+        limit_key = f'client-login:{phone}'
+        if is_login_blocked(limit_key):
+            return Response({'error': LOGIN_BLOCKED_MESSAGE}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        user = User.objects.filter(username=phone).first()
+        if user is None or not user.check_password(password):
+            register_login_failure(limit_key)
             return Response(
                 {'error': 'Неверный телефон или пароль'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if not user.check_password(password):
-            return Response(
-                {'error': 'Неверный телефон или пароль'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+        reset_login_failures(limit_key)
         tokens = get_token_for_user(user)
         return Response(tokens)
+
+
+class MeView(APIView):
+    """Профиль клиента: телефон, имя, фамилия."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile = ClientProfile.objects.filter(user=request.user).first()
+        if not profile:
+            return Response({'error': 'Профиль клиента не найден'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'phone': profile.phone, 'name': profile.name, 'surname': profile.surname})
+
 
 class MyAppointmentView(APIView):
     permission_classes = [IsAuthenticated]
@@ -124,7 +138,8 @@ class CancelAppointmentsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        if appointment.status in ['cancelled', 'completed']:
+        # Отменить можно только предстоящую запись (не пришёл/пришёл/отменена — нельзя)
+        if appointment.status not in ACTIVE_STATUSES:
             return Response(
                 {'error': 'Эту запись нельзя отменить'},
                 status=status.HTTP_400_BAD_REQUEST
