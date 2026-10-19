@@ -8,3 +8,5 @@ __pycache__
 *.pyc
 
 .env
+# Собирается collectstatic при запуске контейнера
+staticfiles/
