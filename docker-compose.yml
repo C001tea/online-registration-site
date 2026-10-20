@@ -16,14 +16,33 @@ services:
     depends_on:
       - db
     container_name: django_salon_tools
-    # Миграции, collectstatic и gunicorn — в docker-entrypoint.sh
-    ports:
-      - "80:8000"
+    # Миграции, collectstatic и gunicorn — в docker-entrypoint.sh.
+    # Наружу не открыт: запросы приходят только через caddy
+    expose:
+      - "8000"
     volumes:
       - .:/app
     environment:
       - DATABASE_URL=postgres://artacsercs:${DATA_BASE_PASSWORD}@db:5432/business_db
     restart: always
 
+  caddy:
+    image: caddy:2.8.4-alpine
+    container_name: caddy_salon
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - API_DOMAIN=${API_DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: always
+
 volumes:
   pg_data:
+  caddy_data:
+  caddy_config:

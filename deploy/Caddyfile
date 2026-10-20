@@ -1,0 +1,21 @@
+# Caddy принимает HTTPS, сам получает и продлевает сертификат Let's Encrypt
+# и передаёт запросы в Django (gunicorn в контейнере web).
+# Домен берётся из .env: API_DOMAIN (см. docs/HTTPS.md).
+
+{$API_DOMAIN:localhost} {
+	encode gzip
+	reverse_proxy {$UPSTREAM:web:8000}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+}
+
+# Временно: старый доступ по HTTP (по IP), пока Vercel проксирует на http://IP.
+# Запросы к домену по HTTP всё равно перенаправляются на HTTPS.
+# Удалить этот блок после переключения vercel.json на HTTPS-домен (docs/HTTPS.md, шаг 6).
+:80 {
+	reverse_proxy {$UPSTREAM:web:8000}
+}

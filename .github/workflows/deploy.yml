@@ -19,5 +19,5 @@ jobs:
             cd online-registration-site
             git pull origin main
             # gunicorn не перезагружает код сам: пересобираем и перезапускаем контейнер
-            docker compose up -d --build web
+            docker compose up -d --build web caddy
             docker image prune -f
