@@ -54,6 +54,7 @@ class Appointment(models.Model):
         ('confirmed', 'Подтверждена'),
         ('cancelled', 'Отменена'),
         ('completed', 'Завершена'),
+        ('no_show', 'Не пришёл'),
     ]
 
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='appointments')
@@ -71,6 +72,8 @@ class Appointment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     client = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
+    # Запись создана персоналом в панели салона (а не клиентом онлайн)
+    created_by_staff = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.client_name} - {self.date} {self.start_time}"
@@ -100,6 +103,19 @@ class MasterSchedule(models.Model):
         return f"{self.master.name} - {self.get_day_of_week_display()}"
 
 
+class MasterDayOff(models.Model):
+    """Выходной мастера в конкретную дату (отпуск, больничный) поверх недельного графика."""
+    master = models.ForeignKey(Master, on_delete=models.CASCADE, related_name='days_off')
+    date = models.DateField()
+
+    class Meta:
+        unique_together = ['master', 'date']
+        ordering = ['date']
+
+    def __str__(self):
+        return f"{self.master.name} - {self.date}"
+
+
 class ClientProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     phone = models.CharField(max_length=20, unique=True)
@@ -124,6 +140,17 @@ class Review(models.Model):
 
 
 class AdminProfile(models.Model):
+    ROLE_CHOICES = [
+        ('owner', 'Владелец'),
+        ('admin', 'Администратор'),
+    ]
+
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="admin_profile")
-    company = models.OneToOneField(Company, on_delete=models.SET_NULL, null=True, blank=True, related_name="admins")
+    # У салона может быть несколько администраторов
+    company = models.ForeignKey(Company, on_delete=models.SET_NULL, null=True, blank=True, related_name="admins")
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='admin')
+    # Устарело: доступ по токену в URL больше не используется (вход в панель — по логину и паролю)
     access_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.company} ({self.get_role_display()})"

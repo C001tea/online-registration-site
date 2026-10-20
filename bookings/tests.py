@@ -2,11 +2,12 @@ from datetime import date, datetime, time, timedelta
 from unittest import mock
 
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import Company, Master, Service, Appointment, MasterSchedule
+from .models import Company, Master, Service, Appointment, MasterSchedule, ClientProfile
 from .slots import get_free_slots
 
 
@@ -22,6 +23,7 @@ def make_company(slug='salon'):
 
 class BookingTestCase(TestCase):
     def setUp(self):
+        cache.clear()  # счётчики лимита входа
         self.client = APIClient()
         self.company, self.service, self.master = make_company()
         self.day = timezone.localdate() + timedelta(days=7)
@@ -145,6 +147,16 @@ class ListViewsTests(BookingTestCase):
         response = self.client.get(f'/api/companies/{self.company.slug}/points/', {'date': self.day.isoformat()})
         self.assertEqual(response.data, ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30'])
 
+    def test_slots_empty_when_master_cannot_book_service(self):
+        url = f'/api/companies/{self.company.slug}/slots/'
+        params = {'master': self.master.id, 'service': self.service.id, 'date': self.day.isoformat()}
+        self.master.services.clear()
+        self.assertEqual(self.client.get(url, params).data['slots'], [])
+        self.master.services.add(self.service)
+        self.service.is_active = False
+        self.service.save()
+        self.assertEqual(self.client.get(url, params).data['slots'], [])
+
     def test_services_by_time(self):
         response = self.client.get(
             f'/api/companies/{self.company.slug}/services/', {'date': self.day.isoformat(), 'time': '11:30'}
@@ -210,3 +222,50 @@ class ClientAccountTests(BookingTestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data['client_name'], 'Ирина')
         self.assertEqual(self.review().status_code, 400)  # второй отзыв
+
+    def test_me(self):
+        response = self.client.get('/api/auth/me/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {'phone': '+37369123456', 'name': 'Ирина', 'surname': ''})
+        ClientProfile.objects.all().delete()
+        self.assertEqual(self.client.get('/api/auth/me/').status_code, 404)
+        self.client.credentials()
+        self.assertEqual(self.client.get('/api/auth/me/').status_code, 401)
+
+    def test_cannot_cancel_no_show(self):
+        appointment = self.make_appointment(self.day, status='no_show')
+        response = self.client.post(f'/api/appointments/{appointment.id}/cancel/')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data, {'error': 'Эту запись нельзя отменить'})
+
+    def test_no_review_to_self(self):
+        self.master.user = self.user()
+        self.master.save()
+        self.make_appointment(timezone.localdate() - timedelta(days=1), status='completed')
+        response = self.review()
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data, {'error': 'Нельзя оставить отзыв самому себе'})
+
+    def test_staff_appointment_gives_review_only_when_completed(self):
+        appointment = self.make_appointment(timezone.localdate() - timedelta(days=1))
+        appointment.created_by_staff = True
+        appointment.save()
+        self.assertEqual(self.review().status_code, 403)
+        appointment.status = 'completed'
+        appointment.save()
+        self.assertEqual(self.review().status_code, 201)
+
+    def test_login_attempts_limited(self):
+        self.client.credentials()
+
+        def login(password):
+            return self.client.post('/api/auth/login/', {'phone': '+37369123456', 'password': password}, format='json')
+
+        for _ in range(5):
+            self.assertEqual(login('wrong').status_code, 400)
+        response = login('wrong')
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.data, {'error': 'Слишком много попыток входа. Попробуйте через 15 минут'})
+        self.assertEqual(login('secret-pass-1').status_code, 429)
+        cache.clear()
+        self.assertEqual(login('secret-pass-1').status_code, 200)
