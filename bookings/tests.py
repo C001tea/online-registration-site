@@ -130,6 +130,15 @@ class ListViewsTests(BookingTestCase):
         response = self.client.get(f'/api/companies/{self.company.slug}/masters/')
         self.assertEqual([m['name'] for m in response.data], ['Анна'])
 
+    def test_masters_without_active_services_hidden(self):
+        # Мастер без услуг или только со скрытыми услугами клиенту не показывается
+        Master.objects.create(company=self.company, name='Без услуг')
+        hidden = Service.objects.create(company=self.company, name='Архив', duration=30, price=1, is_active=False)
+        Master.objects.create(company=self.company, name='Только скрытые').services.add(hidden)
+        self.master.services.add(Service.objects.create(company=self.company, name='Педикюр', duration=60, price=400))
+        response = self.client.get(f'/api/companies/{self.company.slug}/masters/')
+        self.assertEqual([m['name'] for m in response.data], ['Анна'])
+
     def test_inactive_services_hidden(self):
         Service.objects.create(company=self.company, name='Архив', duration=30, price=1, is_active=False)
         response = self.client.get(f'/api/companies/{self.company.slug}/services/')
