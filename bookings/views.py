@@ -2,7 +2,7 @@ from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db import transaction
+from django.db import transaction, connection, DatabaseError
 from django.shortcuts import get_object_or_404
 from .models import Company, Master, Service, Review, Appointment
 from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
@@ -10,6 +10,19 @@ from .slots import get_free_slots, ACTIVE_STATUSES
 from datetime import datetime, timedelta
 from django.db.models import Avg, Q
 from django.utils import timezone
+
+
+class HealthView(APIView):
+    """Проверка для мониторинга: приложение отвечает и база доступна."""
+    authentication_classes = []
+
+    def get(self, request):
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT 1')
+        except DatabaseError:
+            return Response({'status': 'error', 'database': 'unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'status': 'ok'})
 
 
 def parse_date(value):

@@ -1,0 +1,19 @@
+name: Uptime
+
+# Каждые 15 минут проверяем, что сайт и API отвечают. Если нет — workflow
+# падает, и GitHub присылает письмо (тому, кто последним менял этот файл)
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: API через Vercel (как у клиентов)
+        run: curl -fsS --retry 3 --retry-delay 20 --retry-all-errors -m 30 https://nail-salon-frontend.vercel.app/api/health/
+      - name: API напрямую (HTTPS сервера)
+        run: curl -fsS --retry 3 --retry-delay 20 --retry-all-errors -m 30 https://158-101-163-232.sslip.io/api/health/
+      - name: Сайт открывается
+        run: curl -fsS --retry 3 --retry-delay 20 --retry-all-errors -m 30 -o /dev/null https://nail-salon-frontend.vercel.app/

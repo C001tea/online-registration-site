@@ -4,7 +4,12 @@
 
 {$API_DOMAIN:localhost} {
 	encode gzip
-	reverse_proxy {$UPSTREAM:web:8000}
+	reverse_proxy {$UPSTREAM:web:8000} {
+		# Пока контейнер web перезапускается при деплое, запросы ждут его
+		# (до 30 с), а не получают 502
+		lb_try_duration 30s
+		lb_try_interval 250ms
+	}
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"

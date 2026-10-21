@@ -24,6 +24,7 @@ services:
       - .:/app
     environment:
       - DATABASE_URL=postgres://artacsercs:${DATA_BASE_PASSWORD}@db:5432/business_db
+      - SKIP_PREPARE=${SKIP_PREPARE:-0}
     restart: always
 
   caddy:

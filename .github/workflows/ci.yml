@@ -1,0 +1,26 @@
+name: Tests
+
+# Тесты на каждый PR; деплой вызывает этот же workflow и без зелёных тестов не идёт
+on:
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: ci-secret-key-ci-secret-key-ci-secret-key-ci-secret-key-1234
+      DATABASE_URL: sqlite:///ci.sqlite3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Django check
+        run: python manage.py check
+      - name: Миграции соответствуют моделям
+        run: python manage.py makemigrations --check --dry-run
+      - name: Тесты
+        run: python manage.py test

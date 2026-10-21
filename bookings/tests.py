@@ -3,6 +3,7 @@ from unittest import mock
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
+from django.db import OperationalError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -121,6 +122,18 @@ class AppointmentCreateTests(BookingTestCase):
         self.assertEqual(Appointment.objects.latest('id').master, second)
 
         self.assertEqual(self.book(master=None).status_code, 400)  # оба заняты
+
+
+class HealthTests(TestCase):
+    def test_health_ok(self):
+        response = APIClient().get('/api/health/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {'status': 'ok'})
+
+    def test_health_db_down(self):
+        with mock.patch('bookings.views.connection.cursor', side_effect=OperationalError('down')):
+            response = APIClient().get('/api/health/')
+        self.assertEqual(response.status_code, 503)
 
 
 class ListViewsTests(BookingTestCase):
