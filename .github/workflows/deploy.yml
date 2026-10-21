@@ -22,15 +22,5 @@ jobs:
             set -e
             cd online-registration-site
             git pull origin main
-            # Деплой без простоя: пока старый контейнер работает, собираем образ
-            # и готовим миграции и статику; затем быстро меняем контейнер
-            # (Caddy придерживает запросы, пока новый gunicorn запускается)
-            docker compose build web
-            docker compose run --rm --no-deps web sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput"
-            # Сначала Caddy с актуальным конфигом (Caddyfile подключён файлом,
-            # изменения в нём применяет только reload) — он держит запросы,
-            # пока меняется web
-            docker compose up -d --no-build --no-deps caddy
-            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-            SKIP_PREPARE=1 docker compose up -d --no-build web
-            docker image prune -f
+            # Деплой без простоя — подробности в самом скрипте и docs/OPERATIONS.md
+            sh deploy/deploy.sh

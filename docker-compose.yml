@@ -15,7 +15,10 @@ services:
     build: .
     depends_on:
       - db
-    container_name: django_salon_tools
+    # Без container_name: при деплое рядом со старым запускается новый
+    # контейнер (deploy/deploy.sh), имя у них должно быть разным.
+    # Время на завершение начатых запросов при остановке
+    stop_grace_period: 30s
     # Миграции, collectstatic и gunicorn — в docker-entrypoint.sh.
     # Наружу не открыт: запросы приходят только через caddy
     expose:
