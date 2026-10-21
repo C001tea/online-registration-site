@@ -9,9 +9,14 @@ START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker compose build web
 docker compose run --rm --no-deps web sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput"
 
-# 2. Caddy с актуальным конфигом (Caddyfile подключён файлом — нужен reload)
+# 2. Caddy с актуальным конфигом (Caddyfile подключён файлом — нужен reload).
+#    Reload плавный: начатые запросы дорабатывают со старым конфигом.
+#    Переменные из `-e` подставляются в Caddyfile ({$UPSTREAM})
+caddy_reload() {
+    docker compose exec -T "$@" caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+}
 docker compose up -d --no-build --no-deps caddy
-docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+caddy_reload
 
 # 3. Новый контейнер web рядом со старым
 OLD=$(docker compose ps -q web)
@@ -50,12 +55,17 @@ echo "Контейнеры web (имя, IP): $(docker inspect -f '{{.Name}} {{ra
 free -m || true
 docker stats --no-stream --format '{{.Name}}: {{.MemUsage}}, CPU {{.CPUPerc}}' || true
 
-# 5. Старый контейнер: Caddy уже ходит и в новый; старый плавно
-#    останавливаем (gunicorn дорабатывает начатые запросы)
+# 5. Caddy — только в новый контейнер, затем старый плавно останавливаем
+#    (gunicorn дорабатывает начатые запросы). Без переключения запросы шли
+#    в останавливаемый контейнер, повисали и обрывались (502)
+NEW_NAME=$(docker inspect -f '{{.Name}}' "$NEW" | sed 's#^/##')
+caddy_reload -e UPSTREAM="$NEW_NAME:8000"
 if [ -n "$OLD" ]; then
     docker stop -t 30 $OLD
     docker rm $OLD
 fi
+# Обратно на имя сервиса — теперь это только новый контейнер
+caddy_reload
 
 docker image prune -f
 
