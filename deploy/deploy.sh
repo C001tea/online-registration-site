@@ -3,6 +3,7 @@
 # .github/workflows/deploy.yml после git pull. Подробности — docs/OPERATIONS.md
 set -e
 cd "$(dirname "$0")/.."
+START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # 1. Пока работает старый контейнер: новый образ, миграции и статика
 docker compose build web
@@ -52,3 +53,12 @@ if [ -n "$OLD" ]; then
 fi
 
 docker image prune -f
+
+# 6. Ошибки прокси за время деплоя (502 и т.п.) — видны в логе GitHub Actions
+ERRORS=$(docker logs caddy_salon --since "$START" 2>&1 | grep '"logger":"http.log.error"' || true)
+if [ -n "$ERRORS" ]; then
+    echo "Ошибки прокси во время деплоя: $(echo "$ERRORS" | grep -c .)"
+    echo "$ERRORS" | tail -20 | cut -c1-300
+else
+    echo "Ошибок прокси во время деплоя нет"
+fi
