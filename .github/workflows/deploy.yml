@@ -20,4 +20,6 @@ jobs:
             git pull origin main
             # gunicorn не перезагружает код сам: пересобираем и перезапускаем контейнер
             docker compose up -d --build web caddy
+            # Caddyfile подключён файлом: изменения в нём применяет только reload
+            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
             docker image prune -f

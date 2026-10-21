@@ -12,10 +12,3 @@
 		-Server
 	}
 }
-
-# Временно: старый доступ по HTTP (по IP), пока Vercel проксирует на http://IP.
-# Запросы к домену по HTTP всё равно перенаправляются на HTTPS.
-# Удалить этот блок после переключения vercel.json на HTTPS-домен (docs/HTTPS.md, шаг 6).
-:80 {
-	reverse_proxy {$UPSTREAM:web:8000}
-}
