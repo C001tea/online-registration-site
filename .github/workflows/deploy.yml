@@ -27,7 +27,10 @@ jobs:
             # (Caddy придерживает запросы, пока новый gunicorn запускается)
             docker compose build web
             docker compose run --rm --no-deps web sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput"
-            SKIP_PREPARE=1 docker compose up -d --no-build web caddy
-            # Caddyfile подключён файлом: изменения в нём применяет только reload
+            # Сначала Caddy с актуальным конфигом (Caddyfile подключён файлом,
+            # изменения в нём применяет только reload) — он держит запросы,
+            # пока меняется web
+            docker compose up -d --no-build caddy
             docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+            SKIP_PREPARE=1 docker compose up -d --no-build web
             docker image prune -f
