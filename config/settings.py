@@ -24,6 +24,26 @@ ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 if DEBUG:
     ALLOWED_HOSTS.append('*')
 
+# HTTPS-домен API (Caddy, docs/HTTPS.md) — разрешаем его автоматически
+API_DOMAIN = os.getenv('API_DOMAIN', '').strip()
+if API_DOMAIN:
+    ALLOWED_HOSTS.append(API_DOMAIN)
+
+# Caddy передаёт исходную схему в X-Forwarded-Proto; без этого Django
+# считает HTTPS-запросы обычными HTTP. Подделать заголовок снаружи нельзя:
+# web открыт только для caddy, а caddy перезаписывает этот заголовок
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Для входа в Django admin по HTTPS (проверка Origin в CSRF)
+CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', '')
+if API_DOMAIN:
+    CSRF_TRUSTED_ORIGINS.append(f'https://{API_DOMAIN}')
+
+# Куки Django admin — только по HTTPS (включать после перехода на домен)
+HTTPS_ONLY = os.getenv('HTTPS_ONLY', 'False').lower() in ('true', '1', 'yes')
+SESSION_COOKIE_SECURE = HTTPS_ONLY
+CSRF_COOKIE_SECURE = HTTPS_ONLY
+
 
 # Application definition
 INSTALLED_APPS = [
