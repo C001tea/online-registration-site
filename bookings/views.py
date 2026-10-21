@@ -22,7 +22,9 @@ def parse_date(value):
 class MasterListView(APIView):
     def get(self, request, slug):
         company = get_object_or_404(Company, slug=slug)
-        masters = company.masters.filter(is_active=True)
+        # Клиенту показываем только мастеров, к которым можно записаться:
+        # без активных услуг выбор мастера заканчивается пустым экраном
+        masters = company.masters.filter(is_active=True, services__is_active=True).distinct()
         service_id = request.query_params.get('service')
         if service_id:
             service = get_object_or_404(Service, company=company, id=service_id, is_active=True)
