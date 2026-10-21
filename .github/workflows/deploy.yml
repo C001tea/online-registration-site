@@ -30,7 +30,7 @@ jobs:
             # Сначала Caddy с актуальным конфигом (Caddyfile подключён файлом,
             # изменения в нём применяет только reload) — он держит запросы,
             # пока меняется web
-            docker compose up -d --no-build caddy
+            docker compose up -d --no-build --no-deps caddy
             docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
             SKIP_PREPARE=1 docker compose up -d --no-build web
             docker image prune -f
