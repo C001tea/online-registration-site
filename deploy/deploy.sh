@@ -45,6 +45,11 @@ if [ -z "$ready" ]; then
     exit 1
 fi
 
+# Диагностика: память и адреса, пока работают оба контейнера
+echo "Контейнеры web (имя, IP): $(docker inspect -f '{{.Name}} {{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $OLD $NEW | tr '\n' ' ')"
+free -m || true
+docker stats --no-stream --format '{{.Name}}: {{.MemUsage}}, CPU {{.CPUPerc}}' || true
+
 # 5. Старый контейнер: Caddy уже ходит и в новый; старый плавно
 #    останавливаем (gunicorn дорабатывает начатые запросы)
 if [ -n "$OLD" ]; then
@@ -62,3 +67,5 @@ if [ -n "$ERRORS" ]; then
 else
     echo "Ошибок прокси во время деплоя нет"
 fi
+# Последние убийства процессов из-за нехватки памяти (если есть sudo без пароля)
+sudo -n dmesg -T 2>/dev/null | grep -i -E 'out of memory|killed process' | tail -5 || true
