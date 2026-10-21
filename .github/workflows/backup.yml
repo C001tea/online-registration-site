@@ -1,0 +1,72 @@
+name: Backup
+
+# Ежедневная резервная копия базы:
+# - копия на сервере в ~/backups (последние 14);
+# - зашифрованная копия вне сервера — артефакт этого workflow (30 дней).
+# Репозиторий публичный, поэтому копия шифруется паролем из секрета
+# BACKUP_PASSPHRASE. Восстановление — docs/BACKUP.md.
+on:
+  schedule:
+    - cron: '17 1 * * *'   # 01:17 UTC (04:17 по Кишинёву летом)
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Проверка секретов
+        env:
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$PASSPHRASE" ]; then
+            echo "::error::Не задан секрет BACKUP_PASSPHRASE (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      - name: SSH-ключ
+        env:
+          KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+      - name: Копия базы на сервере и загрузка сюда
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -o pipefail
+          NAME="business_db-$(date -u +%Y%m%d-%H%M).dump"
+          echo "NAME=$NAME" >> "$GITHUB_ENV"
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new "$USER@$HOST" "
+            set -e
+            mkdir -p ~/backups
+            docker exec postgres_db pg_dump -U artacsercs -Fc business_db > ~/backups/$NAME
+            ls -1t ~/backups/business_db-*.dump | tail -n +15 | xargs -r rm --
+            cat ~/backups/$NAME
+          " > "$NAME"
+          ls -l "$NAME"
+
+      - name: Проверка копии
+        run: |
+          command -v pg_restore >/dev/null || sudo apt-get install -y -q postgresql-client
+          # Читаем оглавление архива: битый или пустой дамп здесь упадёт
+          TABLES=$(pg_restore --list "$NAME" | grep -c ' TABLE DATA ')
+          echo "Таблиц с данными: $TABLES"
+          test "$TABLES" -gt 5
+
+      - name: Шифрование
+        env:
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$PASSPHRASE" \
+              --symmetric --cipher-algo AES256 -o "$NAME.gpg" "$NAME"
+          rm -f "$NAME"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.gpg
+          retention-days: 30
+          if-no-files-found: error

@@ -5,7 +5,11 @@ on:
     branches: [ "main" ]
 
 jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Server
@@ -18,8 +22,12 @@ jobs:
             set -e
             cd online-registration-site
             git pull origin main
-            # gunicorn не перезагружает код сам: пересобираем и перезапускаем контейнер
-            docker compose up -d --build web caddy
+            # Деплой без простоя: пока старый контейнер работает, собираем образ
+            # и готовим миграции и статику; затем быстро меняем контейнер
+            # (Caddy придерживает запросы, пока новый gunicorn запускается)
+            docker compose build web
+            docker compose run --rm --no-deps web sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput"
+            SKIP_PREPARE=1 docker compose up -d --no-build web caddy
             # Caddyfile подключён файлом: изменения в нём применяет только reload
             docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
             docker image prune -f
