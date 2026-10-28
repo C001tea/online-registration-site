@@ -61,3 +61,14 @@ class OutgoingMessage(models.Model):
 
     def __str__(self):
         return f'{self.chat_id}: {self.text[:40]}'
+
+
+class TelegramLogin(models.Model):
+    """Вход клиента на сайт через бота: ссылка → контакт в боте → код → вход на сайте."""
+    token = models.CharField(max_length=32, unique=True, default=new_token)
+    created_at = models.DateTimeField(auto_now_add=True)
+    chat_id = models.BigIntegerField(null=True, blank=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='+')
+    code = models.CharField(max_length=6, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    used = models.BooleanField(default=False)

@@ -9,7 +9,7 @@ from django.utils import timezone
 from bookings.models import AdminProfile, Appointment
 from bookings.slots import ACTIVE_STATUSES
 from dashboard.permissions import MANAGER_ROLES, get_staff
-from . import telegram, texts
+from . import login, telegram, texts
 from .models import AppointmentTelegram, ClientTelegram, OutgoingMessage, StaffLinkToken, StaffTelegram
 
 logger = logging.getLogger(__name__)
@@ -136,9 +136,15 @@ def handle_update(update):
         return
     text = (message.get('text') or '').strip()
     chat_id = chat['id']
+    if 'contact' in message:
+        login.reply_to(chat_id, *login.bot_contact(message))
+        return
     if text.startswith('/start'):
         parts = text.split(maxsplit=1)
         payload = parts[1] if len(parts) > 1 else ''
+        if payload.startswith('l_'):
+            login.reply_to(chat_id, *login.bot_start(chat_id, payload[2:]))
+            return
         if payload.startswith('a_'):
             link_appointment(chat_id, payload[2:])
             return
@@ -302,3 +308,4 @@ def cleanup(now=None):
     OutgoingMessage.objects.filter(sent_at__lt=now - timedelta(days=30)).delete()
     OutgoingMessage.objects.filter(sent_at__isnull=True, created_at__lt=now - timedelta(days=7)).delete()
     StaffLinkToken.objects.filter(created_at__lt=now - STAFF_LINK_TTL).delete()
+    login.cleanup(now)

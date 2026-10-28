@@ -17,8 +17,12 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from notifications.views import TelegramLoginStartView, TelegramLoginVerifyView
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('api/auth/telegram/start/', TelegramLoginStartView.as_view(), name='telegram-login-start'),
+    path('api/auth/telegram/verify/', TelegramLoginVerifyView.as_view(), name='telegram-login-verify'),
     path('api/', include('bookings.urls')),
     # API панели салона (персонал: владелец, администраторы, мастера)
     path('api/staff/', include('dashboard.urls')),
