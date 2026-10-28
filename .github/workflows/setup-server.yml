@@ -1,0 +1,35 @@
+# Первая настройка нового сервера (переезд на Oracle A1). Запускается вручную:
+# Actions → Setup new server → Run workflow. Скрипт — deploy/setup-server.sh.
+# Секреты: NEW_SERVER_HOST, NEW_SERVER_SSH_KEY (опционально NEW_SERVER_USER).
+name: Setup new server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$HOST" ]; then
+            echo "::error::Не заданы секреты NEW_SERVER_HOST / NEW_SERVER_SSH_KEY"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_new
+          chmod 600 ~/.ssh/id_new
+          # Отпечаток сервера запоминаем при первом подключении
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Настройка сервера
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+        run: |
+          ssh -i ~/.ssh/id_new -o ServerAliveInterval=30 "$SSH_USER@$HOST" 'bash -s' < deploy/setup-server.sh
