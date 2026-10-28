@@ -1,0 +1,36 @@
+# Демо-салон «как будто панелью пользовались неделю» (slug demo) на сервере.
+# Actions → Demo salon → Run workflow. Каждый запуск пересоздаёт его от сегодняшней даты;
+# настоящие салоны не затрагиваются. Входы: demo, demo_admin, demo_anna — пароль из
+# секрета DEMO_PASSWORD (передаётся через stdin, в лог не попадает).
+name: Demo salon
+
+on:
+  workflow_dispatch:
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          PASSWORD: ${{ secrets.DEMO_PASSWORD }}
+        run: |
+          if [ -z "$PASSWORD" ]; then
+            echo "::error::Не задан секрет DEMO_PASSWORD (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Пересоздать демо-салон
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          PASSWORD: ${{ secrets.DEMO_PASSWORD }}
+        run: |
+          printf '%s\n' "$PASSWORD" | ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" \
+            "cd online-registration-site && docker compose exec -T web python manage.py seed_demo --password-stdin"

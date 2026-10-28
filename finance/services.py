@@ -122,7 +122,8 @@ def cash_day(company, day):
         'cash_out': str(cash_out),
         'closing': str(opening + cash_in - cash_out),
         'by_method': {method: str(total(payments.filter(method=method))) for method in METHODS},
-        'payments': [payment_row(p) for p in payments.select_related('appointment', 'master').order_by('created_at')],
+        'payments': [payment_row(p) for p in payments.select_related('appointment', 'master')
+                     .order_by('appointment__start_time', 'id')],
         'operations': [operation_row(o) for o in ops.select_related('salary_payout').order_by('created_at')],
     }
 
