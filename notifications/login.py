@@ -15,6 +15,7 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from bookings.i18n import tr
 from bookings.models import Appointment, ClientProfile
 from bookings.phone import normalize_phone
 from . import telegram
@@ -23,15 +24,18 @@ from .models import ClientTelegram, TelegramLogin
 LOGIN_TTL = timedelta(minutes=10)
 MAX_CODE_ATTEMPTS = 5
 
-SHARE_KEYBOARD = {
-    'keyboard': [[{'text': '📱 Поделиться номером', 'request_contact': True}]],
-    'resize_keyboard': True,
-    'one_time_keyboard': True,
-}
+
+
+def share_keyboard(lang):
+    return {
+        'keyboard': [[{'text': tr('📱 Поделиться номером', lang), 'request_contact': True}]],
+        'resize_keyboard': True,
+        'one_time_keyboard': True,
+    }
+
 REMOVE_KEYBOARD = {'remove_keyboard': True}
 
-ASK_CONTACT = ('Вход на сайт записи.\n\nНажмите кнопку «📱 Поделиться номером» внизу — '
-               'так мы убедимся, что номер ваш.')
+ASK_CONTACT = 'Вход на сайт записи.\n\nНажмите кнопку «📱 Поделиться номером» внизу — так мы убедимся, что номер ваш.'
 LOGIN_EXPIRED = 'Ссылка для входа устарела. Нажмите «Войти через Telegram» на сайте ещё раз.'
 NOT_OWN_CONTACT = 'Отправьте, пожалуйста, свой номер кнопкой «📱 Поделиться номером».'
 BAD_PHONE = 'Не получилось распознать номер. Попробуйте войти на сайте по номеру и паролю.'
@@ -46,8 +50,8 @@ def fresh(queryset):
     return queryset.filter(used=False, created_at__gte=timezone.now() - LOGIN_TTL)
 
 
-def start():
-    return TelegramLogin.objects.create()
+def start(lang='ru'):
+    return TelegramLogin.objects.create(lang=lang)
 
 
 def bot_start(chat_id, token):
@@ -55,10 +59,11 @@ def bot_start(chat_id, token):
     with transaction.atomic():
         login = fresh(TelegramLogin.objects.select_for_update()).filter(token=token).first()
         if not login or (login.chat_id and login.chat_id != chat_id):
-            return LOGIN_EXPIRED, REMOVE_KEYBOARD
+            expired = TelegramLogin.objects.filter(token=token).only('lang').first()
+            return tr(LOGIN_EXPIRED, expired.lang if expired else 'ru'), REMOVE_KEYBOARD
         login.chat_id = chat_id
         login.save(update_fields=['chat_id'])
-    return ASK_CONTACT, SHARE_KEYBOARD
+    return tr(ASK_CONTACT, login.lang), share_keyboard(login.lang)
 
 
 def client_for_phone(phone, first_name, last_name):
@@ -85,12 +90,15 @@ def bot_contact(message):
     chat_id = message['chat']['id']
     contact = message.get('contact') or {}
     sender = message.get('from') or {}
+    # Язык — из последнего начатого входа в этом чате (его ещё нет — русский)
+    pending = fresh(TelegramLogin.objects.filter(chat_id=chat_id)).order_by('-created_at').first()
+    lang = pending.lang if pending else 'ru'
     if not contact.get('user_id') or contact.get('user_id') != sender.get('id'):
-        return NOT_OWN_CONTACT, SHARE_KEYBOARD
+        return tr(NOT_OWN_CONTACT, lang), share_keyboard(lang)
     digits = ''.join(ch for ch in str(contact.get('phone_number', '')) if ch.isdigit())
     phone = normalize_phone(f'+{digits}')
     if not phone:
-        return BAD_PHONE, REMOVE_KEYBOARD
+        return tr(BAD_PHONE, lang), REMOVE_KEYBOARD
     with transaction.atomic():
         login = (fresh(TelegramLogin.objects.select_for_update())
                  .filter(chat_id=chat_id).order_by('-created_at').first())
@@ -98,7 +106,7 @@ def bot_contact(message):
             return LOGIN_EXPIRED, REMOVE_KEYBOARD
         user = client_for_phone(phone, contact.get('first_name'), contact.get('last_name'))
         if user is None:
-            return PHONE_TAKEN, REMOVE_KEYBOARD
+            return tr(PHONE_TAKEN, lang), REMOVE_KEYBOARD
         login.user = user
         login.code = f'{secrets.randbelow(10 ** 6):06d}'
         login.attempts = 0
@@ -107,8 +115,8 @@ def bot_contact(message):
         ClientTelegram.objects.update_or_create(user=user, defaults={'chat_id': chat_id})
         # Номер подтверждён Telegram — записи без входа на этот номер становятся записями аккаунта
         Appointment.objects.filter(client_phone=phone, client__isnull=True).update(client=user)
-    return (f'Код для входа: <b>{escape(login.code)}</b>\n\nВведите его на сайте. '
-            f'Никому не сообщайте этот код.'), REMOVE_KEYBOARD
+    return tr('Код для входа: <b>{code}</b>\n\nВведите его на сайте. Никому не сообщайте этот код.',
+              login.lang, code=escape(login.code)), REMOVE_KEYBOARD
 
 
 def verify(token, code):

@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import os
 from datetime import timedelta
 import cloudinary
+from corsheaders.defaults import default_headers
 import dj_database_url
 
 load_dotenv()
@@ -74,6 +75,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # X-Lang: ro — сайт записи на румынском (bookings/i18n.py)
+    'bookings.i18n.ClientLanguageMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -153,6 +156,7 @@ STATIC_URL = 'static/'
 # '*' — разрешить всех (django-cors-headers не принимает '*' в списке и падает при старте)
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')
 CORS_ALLOW_ALL_ORIGINS = DEBUG or '*' in CORS_ALLOWED_ORIGINS
+CORS_ALLOW_HEADERS = (*default_headers, 'x-lang')
 if '*' in CORS_ALLOWED_ORIGINS:
     CORS_ALLOWED_ORIGINS = []
 
