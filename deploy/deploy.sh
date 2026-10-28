@@ -5,9 +5,9 @@ set -e
 cd "$(dirname "$0")/.."
 START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# 1. Пока работает старый контейнер: новый образ, миграции и статика
-docker compose build web
-docker compose run --rm --no-deps web sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput"
+# 1. Пока работает старый контейнер: новый образ (статика собирается в нём) и миграции
+docker compose build web telegram
+docker compose run --rm --no-deps web python manage.py migrate --noinput
 
 # 2. Caddy с актуальным конфигом (Caddyfile подключён файлом — нужен reload).
 #    Reload плавный: начатые запросы дорабатывают со старым конфигом.
@@ -66,6 +66,10 @@ if [ -n "$OLD" ]; then
 fi
 # Обратно на имя сервиса — теперь это только новый контейнер
 caddy_reload
+
+# Telegram-бот: фоновый процесс на новом коде и адрес вебхука (без токена — пропускается)
+docker compose up -d --no-build --no-deps --force-recreate telegram
+docker exec "$NEW" python manage.py telegram_setup || echo "Вебхук Telegram не обновлён (деплой продолжается)"
 
 docker image prune -f
 

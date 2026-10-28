@@ -1,6 +1,8 @@
 from django.urls import path
 from rest_framework.routers import SimpleRouter
 
+from notifications.views import StaffTelegramView
+
 from . import views
 
 # SimpleRouter — без корневой страницы API (она была бы доступна без прав)
@@ -19,4 +21,5 @@ urlpatterns = [
     path('clients/lookup/', views.ClientLookupView.as_view(), name='staff-client-lookup'),
     path('days-off/', views.DaysOffListView.as_view(), name='staff-days-off'),
     path('company/', views.CompanyView.as_view(), name='staff-company'),
+    path('telegram/', StaffTelegramView.as_view(), name='staff-telegram'),
 ] + router.urls

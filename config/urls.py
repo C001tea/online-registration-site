@@ -22,4 +22,5 @@ urlpatterns = [
     path('api/', include('bookings.urls')),
     # API панели салона (персонал: владелец, администраторы, мастера)
     path('api/staff/', include('dashboard.urls')),
+    path('api/telegram/', include('notifications.urls')),
 ]

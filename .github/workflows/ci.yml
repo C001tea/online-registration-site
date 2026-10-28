@@ -8,9 +8,24 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Та же СУБД, что на сервере: SQLite не ловит, например, ограничения SELECT ... FOR UPDATE
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       SECRET_KEY: ci-secret-key-ci-secret-key-ci-secret-key-ci-secret-key-1234
-      DATABASE_URL: sqlite:///ci.sqlite3
+      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
