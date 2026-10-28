@@ -1,4 +1,4 @@
-from django.urls import include, path
+from django.urls import include, path, re_path
 from rest_framework.routers import SimpleRouter
 
 from finance.views import CheckoutView
@@ -25,6 +25,7 @@ urlpatterns = [
     path('clients/note/', clients.ClientNoteView.as_view(), name='staff-client-note'),
     path('days-off/', views.DaysOffListView.as_view(), name='staff-days-off'),
     path('company/', views.CompanyView.as_view(), name='staff-company'),
+    re_path(r'^company/(?P<kind>logo|main-photo)/$', views.CompanyPhotoView.as_view(), name='staff-company-photo'),
     path('telegram/', StaffTelegramView.as_view(), name='staff-telegram'),
     path('appointments/<int:pk>/checkout/', CheckoutView.as_view(), name='staff-checkout'),
     path('finance/', include('finance.urls')),
