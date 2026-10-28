@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import serializers
 from .models import Company, Service, ServiceCategory, Master, Appointment, Review
 from django.db.models import Avg
@@ -31,16 +32,30 @@ class ServiceSerializer(serializers.ModelSerializer):
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
-        fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'main_photo', 'latitude', 'longitude', 'description']
+        fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'main_photo', 'latitude', 'longitude', 'description',
+                  'cancel_hours']
 
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     # master не обязателен: без него назначается первый свободный мастер услуги
     master = serializers.PrimaryKeyRelatedField(queryset=Master.objects.all(), required=False, allow_null=True)
     service = serializers.PrimaryKeyRelatedField(queryset=Service.objects.all())
+    # Согласие на обработку персональных данных (галочка на сайте); False — отказ
+    consent = serializers.BooleanField(write_only=True, required=False)
 
     class Meta:
         model = Appointment
-        fields = ['master', 'service', 'client_name', 'client_phone', 'client_email', 'date', 'start_time', 'notes']
+        fields = ['master', 'service', 'client_name', 'client_phone', 'client_email', 'date', 'start_time', 'notes',
+                  'consent']
+
+    def validate_consent(self, value):
+        if not value:
+            raise serializers.ValidationError('Нужно согласие на обработку персональных данных')
+        return value
+
+    def create(self, validated_data):
+        if validated_data.pop('consent', False):
+            validated_data['consent_at'] = timezone.now()
+        return super().create(validated_data)
 
     def validate_client_phone(self, value):
         phone = normalize_phone(value)

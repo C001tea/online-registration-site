@@ -7,6 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from bookings.models import AdminProfile, Appointment
+from bookings.rules import cancel_rule_text, client_can_cancel
 from bookings.slots import ACTIVE_STATUSES
 from dashboard.permissions import MANAGER_ROLES, get_staff
 from . import login, telegram, texts
@@ -33,10 +34,13 @@ def enqueue(chat_id, text, buttons=None):
 # --- Кнопки под сообщением клиенту (callback: действие:id привязки) ---
 
 def client_buttons(link):
-    status = link.appointment.status
-    if status == 'pending':
-        return [[('Подтверждаю ✅', f'ok:{link.id}'), ('Отменить', f'cx:{link.id}')]]
-    if status == 'confirmed':
+    """«Отменить» — только пока правило салона разрешает отмену клиентом."""
+    appointment = link.appointment
+    cancel = client_can_cancel(appointment)
+    if appointment.status == 'pending':
+        row = [('Подтверждаю ✅', f'ok:{link.id}')]
+        return [row + [('Отменить', f'cx:{link.id}')]] if cancel else [row]
+    if appointment.status == 'confirmed' and cancel:
         return [[('Отменить запись', f'cx:{link.id}')]]
     return []
 
@@ -216,6 +220,9 @@ def apply_action(action, link_id, chat_id, message_id):
         popup = ''
         if action in ('ok', 'cx', 'cy') and not editable:
             popup = texts.TOO_LATE
+        elif action in ('cx', 'cy') and not client_can_cancel(appointment):
+            popup = cancel_rule_text(link.appointment.company)
+            editable = False
         elif action == 'ok' and appointment.status == 'pending':
             appointment.status = 'confirmed'
             appointment.save(update_fields=['status'])

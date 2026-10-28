@@ -291,3 +291,48 @@ class ClientAccountTests(BookingTestCase):
         self.assertEqual(login('secret-pass-1').status_code, 429)
         cache.clear()
         self.assertEqual(login('secret-pass-1').status_code, 200)
+
+
+class CancelRuleAndConsentTests(BookingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user('+37369123456', password='Str0ng-pass-123')
+        ClientProfile.objects.create(user=self.user, phone='+37369123456', name='Ирина')
+        self.client.force_authenticate(self.user)
+
+    def soon(self, hours):
+        start = timezone.localtime() + timedelta(hours=hours)
+        return Appointment.objects.create(
+            company=self.company, master=self.master, service=self.service, client=self.user,
+            client_name='Ирина', client_phone='+37369123456', date=start.date(),
+            start_time=start.time().replace(second=0, microsecond=0), end_time=time(23, 59), status='confirmed')
+
+    def test_cancel_deadline(self):
+        self.company.cancel_hours = 3
+        self.company.phone = '+37322000000'
+        self.company.save()
+        late = self.soon(2)
+        early = self.soon(30)
+        my = {a['id']: a['can_cancel'] for a in self.client.get('/api/appointments/my/').data}
+        self.assertEqual((my[late.id], my[early.id]), (False, True))
+        response = self.client.post(f'/api/appointments/{late.id}/cancel/')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('не позже чем за 3 ч', response.data['error'])
+        self.assertIn('+37322000000', response.data['error'])
+        self.assertEqual(self.client.post(f'/api/appointments/{early.id}/cancel/').status_code, 200)
+
+    def test_default_allows_until_start(self):
+        self.assertEqual(self.client.post(f'/api/appointments/{self.soon(1).id}/cancel/').status_code, 200)
+
+    def test_rule_is_public(self):
+        self.company.cancel_hours = 12
+        self.company.save()
+        self.assertEqual(self.client.get(f'/api/companies/{self.company.slug}/info/').data['cancel_hours'], 12)
+
+    def test_consent_is_stored_and_refusal_rejected(self):
+        self.client.force_authenticate(None)
+        self.assertEqual(self.book(consent=True).status_code, 201)
+        self.assertIsNotNone(Appointment.objects.get().consent_at)
+        response = self.book(start_time='11:00', consent=False)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('согласие', str(response.data))
