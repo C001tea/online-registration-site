@@ -16,11 +16,12 @@ jobs:
         uses: appleboy/ssh-action@master
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         with:
           host: ${{ secrets.NEW_SERVER_HOST }}
           username: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
           key: ${{ secrets.NEW_SERVER_SSH_KEY }}
-          envs: TELEGRAM_BOT_TOKEN
+          envs: TELEGRAM_BOT_TOKEN,SENTRY_DSN
           script: |
             set -e
             cd online-registration-site
@@ -29,6 +30,11 @@ jobs:
             if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
               sed -i '/^TELEGRAM_BOT_TOKEN=/d' .env
               printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN" >> .env
+            fi
+            # Sentry (ошибки сервера) — так же из секрета SENTRY_DSN
+            if [ -n "$SENTRY_DSN" ]; then
+              sed -i '/^SENTRY_DSN=/d' .env
+              printf 'SENTRY_DSN=%s\n' "$SENTRY_DSN" >> .env
             fi
             # Деплой без простоя — подробности в самом скрипте и docs/OPERATIONS.md
             sh deploy/deploy.sh

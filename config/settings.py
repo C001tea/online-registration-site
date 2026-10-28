@@ -194,6 +194,20 @@ if DATABASE_URL:
     DATABASES['default'] = dj_database_url.parse(DATABASE_URL)
 
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Ошибки сервера → Sentry (без SENTRY_DSN выключено). Персональные данные не отправляются:
+# ни пользователь, ни заголовки, ни тело запроса (там имена и телефоны клиентов)
+SENTRY_DSN = os.getenv('SENTRY_DSN', '').strip()
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.getenv('SENTRY_ENVIRONMENT', 'production'),
+        send_default_pii=False,
+        max_request_body_size='never',
+        traces_sample_rate=0.0,
+    )
+
 # Telegram-бот: подтверждения и напоминания (notifications/). Без токена бот выключен
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '').strip()
 TELEGRAM_BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@')

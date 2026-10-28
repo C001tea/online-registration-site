@@ -1,0 +1,30 @@
+name: Backup restore check
+
+# Раз в неделю: последняя копия базы с сервера восстанавливается во временную базу,
+# число строк сравнивается с рабочей (deploy/restore-check.sh). Рабочая база не меняется.
+# Провал — письмо от GitHub (как у Uptime). В лог попадают только числа строк.
+on:
+  schedule:
+    - cron: '43 2 * * 0'   # воскресенье 02:43 UTC — после ежедневного Backup (01:17)
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SSH-ключ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+
+      - name: Восстановление копии во временную базу
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+        run: |
+          ssh -i ~/.ssh/id_server -o StrictHostKeyChecking=accept-new "$SSH_USER@$HOST" 'bash -s' < deploy/restore-check.sh

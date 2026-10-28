@@ -70,8 +70,8 @@ caddy_reload
 # Telegram-бот: фоновый процесс на новом коде и адрес вебхука (без токена — пропускается)
 docker compose up -d --no-build --no-deps --force-recreate telegram
 docker exec "$NEW" python manage.py telegram_setup || echo "Вебхук Telegram не обновлён (деплой продолжается)"
-# Загрузка фото из панели работает только с ключами Cloudinary (значения не печатаются)
-docker exec "$NEW" python manage.py shell -c "from django.conf import settings as s; c = s.CLOUDINARY_STORAGE; print('Cloudinary (фото):', 'ключи заданы' if c['API_KEY'] and c['API_SECRET'] else 'ключей нет - фото не загрузятся')" || true
+# Загрузка фото работает только с ключами Cloudinary, Sentry — с SENTRY_DSN (значения не печатаются)
+docker exec "$NEW" python manage.py shell -c "from django.conf import settings as s; c = s.CLOUDINARY_STORAGE; print('Cloudinary (фото):', 'ключи заданы' if c['API_KEY'] and c['API_SECRET'] else 'ключей нет - фото не загрузятся'); print('Sentry (ошибки):', 'включён' if s.SENTRY_DSN else 'выключен - нет SENTRY_DSN')" || true
 
 docker image prune -f
 
