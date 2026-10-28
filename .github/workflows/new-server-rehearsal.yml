@@ -1,0 +1,116 @@
+# Репетиция переезда: разворачивает копию сайта на новом сервере (Oracle A1)
+# с копией данных старого. Старый сервер только читается, сайт не затрагивается.
+# Запуск вручную: Actions → New server rehearsal → Run workflow.
+# Можно запускать повторно: код и данные на новом сервере обновляются.
+name: New server rehearsal
+
+on:
+  workflow_dispatch:
+
+env:
+  NEW_DOMAIN: api.timepoint.tech
+  APP_DIR: online-registration-site
+
+jobs:
+  rehearsal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Домен указывает на новый сервер
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          ip=$(getent ahostsv4 "$NEW_DOMAIN" | awk '{print $1; exit}')
+          echo "$NEW_DOMAIN -> ${ip:-нет записи}; сервер: $HOST"
+          if [ "$ip" != "$HOST" ]; then
+            echo "::error::DNS ещё не обновился: $NEW_DOMAIN должен указывать на $HOST (подождите несколько минут и запустите снова)"
+            exit 1
+          fi
+
+      - name: SSH-доступ к обоим серверам
+        env:
+          NEW_KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          NEW_HOST: ${{ secrets.NEW_SERVER_HOST }}
+          OLD_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          OLD_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$NEW_KEY" > ~/.ssh/id_new
+          printf '%s\n' "$OLD_KEY" > ~/.ssh/id_old
+          chmod 600 ~/.ssh/id_new ~/.ssh/id_old
+          ssh-keyscan -H "$NEW_HOST" "$OLD_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Код и настройки на новом сервере
+        env:
+          NEW_HOST: ${{ secrets.NEW_SERVER_HOST }}
+          NEW_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          OLD_HOST: ${{ secrets.SERVER_HOST }}
+          OLD_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          NEW="ssh -i ~/.ssh/id_new $NEW_USER@$NEW_HOST"
+          OLD="ssh -i ~/.ssh/id_old $OLD_USER@$OLD_HOST"
+          $NEW "test -d $APP_DIR/.git || git clone https://github.com/${{ github.repository }}.git $APP_DIR; cd $APP_DIR && git pull origin main"
+          # .env со старого сервера напрямую на новый, в лог не попадает.
+          # Меняется только домен API
+          $OLD "cat $APP_DIR/.env" | $NEW "cat > $APP_DIR/.env && chmod 600 $APP_DIR/.env"
+          $NEW "cd $APP_DIR && sed -i '/^API_DOMAIN=/d' .env && echo 'API_DOMAIN=$NEW_DOMAIN' >> .env"
+          $NEW "cd $APP_DIR && grep -c . .env | sed 's/^/строк в .env: /'"
+
+      - name: База данных
+        env:
+          NEW_HOST: ${{ secrets.NEW_SERVER_HOST }}
+          NEW_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          OLD_HOST: ${{ secrets.SERVER_HOST }}
+          OLD_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          NEW="ssh -i ~/.ssh/id_new $NEW_USER@$NEW_HOST"
+          OLD="ssh -i ~/.ssh/id_old $OLD_USER@$OLD_HOST"
+          $NEW "cd $APP_DIR && docker compose up -d db"
+          for _ in $(seq 1 30); do
+            $NEW "docker exec postgres_db pg_isready -U artacsercs -d business_db" >/dev/null 2>&1 && break
+            sleep 2
+          done
+          # Копия данных (персональные данные клиентов): только на диске раннера,
+          # в конце удаляется, в артефакты не попадает
+          DUMP="$RUNNER_TEMP/business_db.dump"
+          $OLD "docker exec postgres_db pg_dump -U artacsercs -Fc business_db" > "$DUMP"
+          ls -l "$DUMP" | awk '{print "размер копии:", $5, "байт"}'
+          $NEW "docker exec -i postgres_db pg_restore -U artacsercs -d business_db --clean --if-exists --no-owner" < "$DUMP" || echo "pg_restore вернул предупреждения, сверяем данные ниже"
+          rm -f "$DUMP"
+
+      - name: Запуск сайта
+        env:
+          NEW_HOST: ${{ secrets.NEW_SERVER_HOST }}
+          NEW_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+        run: |
+          ssh -i ~/.ssh/id_new "$NEW_USER@$NEW_HOST" "cd $APP_DIR && docker compose up -d --build"
+
+      - name: Проверка
+        env:
+          NEW_HOST: ${{ secrets.NEW_SERVER_HOST }}
+          NEW_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          OLD_HOST: ${{ secrets.SERVER_HOST }}
+          OLD_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          NEW="ssh -i ~/.ssh/id_new $NEW_USER@$NEW_HOST"
+          OLD="ssh -i ~/.ssh/id_old $OLD_USER@$OLD_HOST"
+          # Caddy получает сертификат Let's Encrypt: ждём до 4 минут
+          ok=""
+          for _ in $(seq 1 48); do
+            if curl -fsS -m 10 "https://$NEW_DOMAIN/api/health/" >/tmp/health.json 2>/dev/null; then ok=1; break; fi
+            sleep 5
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::https://$NEW_DOMAIN/api/health/ не отвечает"
+            $NEW "docker logs --tail 40 caddy_salon; docker compose -f $APP_DIR/docker-compose.yml logs --tail 40 web"
+            exit 1
+          fi
+          echo "health: $(cat /tmp/health.json)"
+          # Те же данные, что и на старом сервере
+          q="select count(*) from bookings_company union all select count(*) from bookings_master union all select count(*) from bookings_service union all select count(*) from bookings_appointment"
+          a=$($OLD "docker exec postgres_db psql -U artacsercs -d business_db -tAc \"$q\"" | tr '\n' ' ')
+          b=$($NEW "docker exec postgres_db psql -U artacsercs -d business_db -tAc \"$q\"" | tr '\n' ' ')
+          echo "старый (компании, мастера, услуги, записи): $a"
+          echo "новый  (компании, мастера, услуги, записи): $b"
+          [ "$a" = "$b" ] || { echo "::error::Данные не совпали"; exit 1; }
+          curl -fsS -m 10 -o /dev/null -w "info API: %{http_code}\n" "https://$NEW_DOMAIN/api/companies/jcnails/info/"
+          $NEW "uname -m; docker ps --format '{{.Names}}: {{.Status}}'"
