@@ -1,0 +1,54 @@
+# Изменить настройку в .env на сервере без захода по SSH.
+# Actions → Server settings → Run workflow → выбрать настройку и значение.
+# Только несекретные настройки: значение видно в логе. Пароли и ключи
+# так не менять. После изменения — деплой без простоя (deploy/deploy.sh).
+name: Server settings
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: Настройка
+        required: true
+        type: choice
+        options:
+          - HTTPS_ONLY
+          - CORS_ALLOWED_ORIGINS
+          - CSRF_TRUSTED_ORIGINS
+      value:
+        description: Значение
+        required: true
+        type: string
+
+jobs:
+  set:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Изменение и применение
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          NAME: ${{ inputs.name }}
+          VALUE: ${{ inputs.value }}
+        run: |
+          case "$VALUE" in
+            *[!A-Za-z0-9.,:/_-]*|"") echo "::error::Недопустимые символы в значении"; exit 1 ;;
+          esac
+          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "
+            set -e
+            cd online-registration-site
+            sed -i '/^$NAME=/d' .env
+            echo '$NAME=$VALUE' >> .env
+            echo 'Теперь в .env: $NAME=$VALUE'
+            sh deploy/deploy.sh
+          "
