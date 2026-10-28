@@ -82,3 +82,14 @@ class IsStaffManagerOrReadOnly(IsStaff):
         if request.method not in SAFE_METHODS and not request.staff.is_manager:
             raise PermissionDenied({'error': NOT_ENOUGH_RIGHTS_MESSAGE})
         return True
+
+
+class IsStaffOwner(IsStaff):
+    """Только владелец салона (финансы: отчёты, касса, зарплаты)."""
+
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+        if request.staff.role != 'owner':
+            raise PermissionDenied({'error': NOT_ENOUGH_RIGHTS_MESSAGE})
+        return True
