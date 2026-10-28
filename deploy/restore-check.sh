@@ -12,10 +12,14 @@ LIVE_DB=${LIVE_DB:-business_db}
 TMP_DB=restore_check
 BACKUPS=${BACKUPS:-$HOME/backups}
 MAX_AGE_HOURS=${MAX_AGE_HOURS:-48}
-TABLES="bookings_company bookings_master bookings_service bookings_appointment auth_user bookings_clientprofile finance_payment"
+# Главные таблицы: если в рабочей базе есть строки, в копии они тоже должны быть
+CORE="bookings_company bookings_master bookings_service bookings_appointment auth_user"
+# Для сведения: могли появиться позже копии (новые разделы) или быть пустыми
+EXTRA="bookings_clientprofile finance_payment"
 
+# Число строк; таблицы нет — «нет»
 psql_count() {
-    docker exec "$CONTAINER" psql -U "$DB_USER" -d "$1" -tAc "SELECT count(*) FROM $2"
+    docker exec "$CONTAINER" psql -U "$DB_USER" -d "$1" -tAc "SELECT count(*) FROM $2" 2>/dev/null || echo "нет"
 }
 
 drop_tmp() {
@@ -44,10 +48,16 @@ echo "Копия восстановлена во временную базу $TM
 
 # Кириллица — 2 байта на букву, printf считает байты
 printf '%-33s %17s %15s\n' "таблица" "рабочая" "копия"
-for table in $TABLES; do
+for table in $CORE $EXTRA; do
     live=$(psql_count "$LIVE_DB" "$table")
     restored=$(psql_count "$TMP_DB" "$table")
     printf '%-26s %10s %10s\n' "$table" "$live" "$restored"
+    case " $EXTRA " in *" $table "*) continue ;; esac
+    if [ "$restored" = "нет" ] || [ "$live" = "нет" ]; then
+        echo "ОШИБКА: нет таблицы $table"
+        STATUS=1
+        continue
+    fi
     # Копия ночная: строк может быть меньше, чем сейчас, но не пусто, если в рабочей есть данные
     if [ "$live" -gt 0 ] && [ "$restored" -eq 0 ]; then
         echo "ОШИБКА: в копии пустая таблица $table"
