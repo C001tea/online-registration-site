@@ -1,0 +1,77 @@
+# Финальное переключение на новый сервер (Oracle A1, api.timepoint.tech).
+# Запуск вручную: Actions → New server cutover → Run workflow.
+# 1. Останавливает web на старом сервере (запись на паузе, база больше не меняется).
+# 2. Переносит свежую копию базы на новый сервер, сверяет все таблицы.
+# 3. Запускает web на новом сервере.
+# При любой ошибке web на старом сервере запускается обратно.
+# После успеха: мёрж PR фронтенда с новым адресом API в vercel.json.
+name: New server cutover
+
+on:
+  workflow_dispatch:
+
+env:
+  NEW_DOMAIN: api.timepoint.tech
+  APP_DIR: online-registration-site
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-доступ к обоим серверам
+        env:
+          NEW_KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          NEW_HOST: ${{ secrets.NEW_SERVER_HOST }}
+          NEW_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          OLD_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          OLD_HOST: ${{ secrets.SERVER_HOST }}
+          OLD_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$NEW_KEY" > ~/.ssh/id_new
+          printf '%s\n' "$OLD_KEY" > ~/.ssh/id_old
+          chmod 600 ~/.ssh/id_new ~/.ssh/id_old
+          ssh-keyscan -H "$NEW_HOST" "$OLD_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "NEW=ssh -i $HOME/.ssh/id_new $NEW_USER@$NEW_HOST" >> "$GITHUB_ENV"
+          echo "OLD=ssh -i $HOME/.ssh/id_old $OLD_USER@$OLD_HOST" >> "$GITHUB_ENV"
+
+      - name: Новый сервер готов
+        run: curl -fsS -m 15 "https://$NEW_DOMAIN/api/health/"
+
+      - name: Пауза старого сайта
+        run: |
+          $OLD "cd $APP_DIR && docker compose stop web"
+          echo "OLD_STOPPED=1" >> "$GITHUB_ENV"
+
+      - name: Перенос базы
+        run: |
+          $NEW "cd $APP_DIR && git pull origin main && docker compose stop web"
+          DUMP="$RUNNER_TEMP/business_db.dump"
+          $OLD "docker exec postgres_db pg_dump -U artacsercs -Fc business_db" > "$DUMP"
+          ls -l "$DUMP" | awk '{print "размер копии:", $5, "байт"}'
+          $NEW "docker exec -i postgres_db pg_restore -U artacsercs -d business_db --clean --if-exists --no-owner" < "$DUMP" || echo "pg_restore вернул предупреждения — решает сверка таблиц ниже"
+          rm -f "$DUMP"
+
+      - name: Сверка всех таблиц
+        run: |
+          q="select table_name || '=' || (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from public.%I', table_name), false, true, '')))[1]::text from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by 1"
+          $OLD "docker exec postgres_db psql -U artacsercs -d business_db -tAc \"$q\"" > old.txt
+          $NEW "docker exec postgres_db psql -U artacsercs -d business_db -tAc \"$q\"" > new.txt
+          echo "таблиц: $(wc -l < old.txt)"; grep -E '^bookings_(company|master|service|appointment|clientprofile)=' new.txt
+          diff old.txt new.txt && echo "Все таблицы совпадают"
+
+      - name: Запуск на новом сервере
+        run: |
+          $NEW "cd $APP_DIR && docker compose up -d --no-build web"
+          for _ in $(seq 1 60); do
+            curl -fsS -m 5 "https://$NEW_DOMAIN/api/health/" && exit 0
+            sleep 2
+          done
+          echo "::error::Новый сервер не ответил после переноса"
+          exit 1
+
+      - name: Откат — старый сайт снова работает
+        if: failure() && env.OLD_STOPPED == '1'
+        run: |
+          $OLD "cd $APP_DIR && docker compose start web"
+          echo "::error::Переключение не удалось, старый сервер запущен обратно"
