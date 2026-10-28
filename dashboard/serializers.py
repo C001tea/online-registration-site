@@ -464,5 +464,6 @@ class StaffCompanySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Company
-        fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude']
+        fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours']
         read_only_fields = ['id', 'slug']
+        extra_kwargs = {'cancel_hours': {'max_value': 168}}

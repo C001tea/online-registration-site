@@ -7,6 +7,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from notifications import services as notifications
 from .models import ClientProfile, Appointment
 from .phone import normalize_phone
+from .rules import cancel_rule_text, client_can_cancel
 from .slots import ACTIVE_STATUSES
 from .login_limit import (
     is_login_blocked, login_limit_key, register_login_failure, reset_login_failures, LOGIN_BLOCKED_MESSAGE
@@ -120,7 +121,7 @@ class MyAppointmentView(APIView):
     def get(self, request):
         appointments = Appointment.objects.filter(
             client=request.user
-        ).select_related('master', 'service').order_by('-date', '-start_time')
+        ).select_related('master', 'service', 'company').order_by('-date', '-start_time')
 
         data = []
 
@@ -133,7 +134,9 @@ class MyAppointmentView(APIView):
                 "date": apt.date,
                 "start_time": apt.start_time,
                 "end_time": apt.end_time,
-                "status": apt.status
+                "status": apt.status,
+                # Можно ли отменить самому (правило салона «не позже чем за N часов»)
+                "can_cancel": client_can_cancel(apt),
             })
         return Response(data)
 
@@ -165,6 +168,9 @@ class CancelAppointmentsView(APIView):
                 {'error': 'Прошедшую запись нельзя отменить'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if not client_can_cancel(appointment):
+            return Response({'error': cancel_rule_text(appointment.company)}, status=status.HTTP_400_BAD_REQUEST)
 
         appointment.status = 'cancelled'
         appointment.save()

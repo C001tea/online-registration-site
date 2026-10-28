@@ -12,6 +12,8 @@ class Company(models.Model):
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     description = models.TextField(blank=True)
+    # Клиент может отменить запись сам (сайт, бот) не позже чем за столько часов; 0 — до начала
+    cancel_hours = models.PositiveSmallIntegerField(default=0)
 
     def __str__(self):
         return self.name
@@ -69,6 +71,8 @@ class Appointment(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     notes = models.TextField(blank=True)
     reminder_sent = models.BooleanField(default=False)
+    # Когда клиент дал согласие на обработку персональных данных (онлайн-запись)
+    consent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     client = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')

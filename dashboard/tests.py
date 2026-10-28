@@ -1038,6 +1038,14 @@ class CompanyTests(StaffTestCase):
         super().setUp()
         self.auth(self.owner)
 
+    def test_cancel_hours(self):
+        url = '/api/staff/company/'
+        self.assertEqual(self.api.get(url).data['cancel_hours'], 0)
+        self.assertEqual(self.api.patch(url, {'cancel_hours': 200}, format='json').status_code, 400)
+        self.assertEqual(self.api.patch(url, {'cancel_hours': 24}, format='json').data['cancel_hours'], 24)
+        self.auth(self.master_user)
+        self.assertEqual(self.api.patch(url, {'cancel_hours': 1}, format='json').status_code, 403)
+
     def test_coordinates(self):
         url = '/api/staff/company/'
         data = self.api.get(url).data

@@ -464,3 +464,18 @@ class TelegramLoginTests(TelegramTestCase):
         for _ in range(LOGIN_STARTS_PER_HOUR):
             self.assertEqual(self.api.post('/api/auth/telegram/start/').status_code, 200)
         self.assertEqual(self.api.post('/api/auth/telegram/start/').status_code, 429)
+
+
+class CancelRuleInBotTests(TelegramTestCase):
+    def test_cancel_button_hidden_and_refused_after_deadline(self):
+        self.company.cancel_hours = 400  # больше, чем до записи (через 7 дней)
+        self.company.phone = '+37322000000'
+        self.company.save()
+        link = self.linked_appointment()
+        buttons = [b['callback_data'] for b in self.fake.last('sendMessage')['reply_markup']['inline_keyboard'][0]]
+        self.assertEqual(buttons, [f'ok:{link.id}'])  # подтвердить можно, отменить — нет
+        self.press(f'cy:{link.id}')
+        self.assertEqual(Appointment.objects.get().status, 'pending')
+        self.assertIn('не позже чем за 400 ч', self.fake.last('answerCallbackQuery')['text'])
+        self.press(f'ok:{link.id}')
+        self.assertEqual(Appointment.objects.get().status, 'confirmed')
