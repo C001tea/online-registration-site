@@ -1,0 +1,49 @@
+# Нагрузочный тест API на чтение: Actions → Load test → Run workflow.
+# Бьёт напрямую в api.timepoint.tech (не в Vercel), записей не создаёт.
+# Параллельно снимает загрузку нового сервера. Скрипт — deploy/load_test.py.
+name: Load test
+
+on:
+  workflow_dispatch:
+    inputs:
+      levels:
+        description: Одновременных клиентов по этапам
+        default: '10,25,50,100,200,400'
+      seconds:
+        description: Секунд на этап
+        default: '30'
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: pip install aiohttp==3.14.5
+
+      - name: SSH для замеров сервера
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Замеры сервера (в фоне)
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+        run: |
+          (while true; do
+            echo "$(date -u +%T) $(ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "echo -n \"load: \$(cut -d' ' -f1-3 /proc/loadavg)  \"; docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}}' | grep -E 'web|postgres' | tr '\n' ' '" 2>&1)" >> "$RUNNER_TEMP/server-stats.txt"
+            sleep 10
+          done) &
+
+      - name: Тест
+        run: python3 deploy/load_test.py https://api.timepoint.tech jcnails "${{ inputs.levels }}" "${{ inputs.seconds }}"
+
+      - name: Загрузка сервера во время теста
+        if: always()
+        run: cat "$RUNNER_TEMP/server-stats.txt" || true
