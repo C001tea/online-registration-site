@@ -1,5 +1,19 @@
 # Эксплуатация: деплой, мониторинг, резервные копии
 
+## Сервер
+- Oracle Cloud, Always Free **VM.Standard.A1.Flex** (4 OCPU, 24 ГБ, ARM/aarch64),
+  Ubuntu 24.04, регион Frankfurt. IP `138.2.140.254` (Reserved, `salon-ip`).
+- API: **https://api.timepoint.tech** (DNS-запись A `api` в Namecheap).
+  Фронтенд ходит туда через прокси Vercel (`vercel.json` во фронтенде).
+- Вход: `ssh -i <ключ> ubuntu@138.2.140.254`. В GitHub — секреты `NEW_SERVER_HOST`,
+  `NEW_SERVER_SSH_KEY` (пользователь по умолчанию `ubuntu`).
+- Первая настройка машины: `deploy/setup-server.sh` (Actions → Setup new server).
+- Изменить несекретную настройку в `.env` (например, `HTTPS_ONLY`):
+  Actions → Server settings → Run workflow. Применяется деплоем без простоя.
+- Переезд со старого сервера (`158.101.163.232`) выполнен 28.10.2026: workflow
+  `new-server-rehearsal.yml` и `new-server-cutover.yml`. Старый сервер остановлен
+  (web выключен), его база — запасная копия на время после переезда.
+
 ## Деплой
 Автоматически при мёрже в `main` (`.github/workflows/deploy.yml`):
 1. **Тесты** (`ci.yml`): `manage.py check`, проверка миграций, `manage.py test`.
@@ -75,7 +89,7 @@ docker compose stop web                      # чтобы никто не пис
 docker exec -i postgres_db pg_restore -U artacsercs -d business_db \
     --clean --if-exists --no-owner < /путь/к/business_db.dump
 docker compose up -d web
-curl -s https://158-101-163-232.sslip.io/api/health/
+curl -s https://api.timepoint.tech/api/health/
 ```
 `--clean` заменяет текущие данные данными из копии. Чтобы сначала посмотреть копию,
 не трогая рабочую базу, восстановите её в отдельную базу:
