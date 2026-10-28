@@ -31,7 +31,8 @@ from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES, get_free_slots
 from notifications import services as notifications
 from .errors import StaffError
-from .permissions import IsStaff, IsStaffManagerOrReadOnly, get_staff, NOT_ENOUGH_RIGHTS_MESSAGE
+from .permissions import IsStaff, IsStaffManager, IsStaffManagerOrReadOnly, get_staff, NOT_ENOUGH_RIGHTS_MESSAGE
+from .photos import replace_photo, uploaded_file
 from .serializers import (
     PHONE_REGION, DAY_NAMES,
     StaffLoginSerializer, PasswordChangeSerializer, StaffAppointmentSerializer, StaffAppointmentWriteSerializer,
@@ -430,6 +431,12 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
         master.save(update_fields=['is_active'])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=['post', 'delete'])
+    def photo(self, request, pk=None):
+        # POST multipart: file; DELETE — убрать фото
+        master = replace_photo(self.get_object(), 'photo', uploaded_file(request))
+        return Response(self.get_serializer(master).data)
+
     @action(detail=True, methods=['get', 'put'])
     def schedule(self, request, pk=None):
         master = self.get_object()
@@ -589,3 +596,15 @@ class CompanyView(APIView):
         company = serializer.save()
         company.refresh_from_db()
         return Response(StaffCompanySerializer(company).data)
+
+
+class CompanyPhotoView(APIView):
+    """Логотип и главное фото салона: POST multipart (file) — загрузить, DELETE — убрать."""
+    permission_classes = [IsStaffManager]
+    FIELDS = {'logo': 'logo', 'main-photo': 'main_photo'}
+
+    def post(self, request, kind):
+        company = replace_photo(request.staff.company, self.FIELDS[kind], uploaded_file(request))
+        return Response(StaffCompanySerializer(company).data)
+
+    delete = post

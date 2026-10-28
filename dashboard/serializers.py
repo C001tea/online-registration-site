@@ -461,9 +461,19 @@ class CoordinateField(serializers.FloatField):
 class StaffCompanySerializer(serializers.ModelSerializer):
     latitude = CoordinateField(allow_null=True, required=False, min_value=-90, max_value=90)
     longitude = CoordinateField(allow_null=True, required=False, min_value=-180, max_value=180)
+    # Фото загружаются отдельно: /company/logo/, /company/main-photo/
+    logo = serializers.SerializerMethodField()
+    main_photo = serializers.SerializerMethodField()
 
     class Meta:
         model = Company
-        fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours']
+        fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
+                  'logo', 'main_photo']
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}}
+
+    def get_logo(self, obj):
+        return obj.logo.url if obj.logo else None
+
+    def get_main_photo(self, obj):
+        return obj.main_photo.url if obj.main_photo else None
