@@ -14,13 +14,21 @@ jobs:
     steps:
       - name: Deploy to Server
         uses: appleboy/ssh-action@master
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         with:
           host: ${{ secrets.NEW_SERVER_HOST }}
           username: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
           key: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          envs: TELEGRAM_BOT_TOKEN
           script: |
             set -e
             cd online-registration-site
             git pull origin main
+            # Токен бота из секрета GitHub → .env (если секрет задан; в лог не выводится)
+            if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+              sed -i '/^TELEGRAM_BOT_TOKEN=/d' .env
+              printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN" >> .env
+            fi
             # Деплой без простоя — подробности в самом скрипте и docs/OPERATIONS.md
             sh deploy/deploy.sh

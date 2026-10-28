@@ -29,6 +29,7 @@ from bookings.models import (
 )
 from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES, get_free_slots
+from notifications import services as notifications
 from .errors import StaffError
 from .permissions import IsStaff, IsStaffManagerOrReadOnly, get_staff, NOT_ENOUGH_RIGHTS_MESSAGE
 from .serializers import (
@@ -237,11 +238,14 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
 
     def partial_update(self, request, pk=None):
         appointment = self.get_object()
+        before = notifications.snapshot(appointment)
         serializer = StaffAppointmentWriteSerializer(
             appointment, data=request.data, partial=True, context=self.get_serializer_context()
         )
         serializer.is_valid(raise_exception=True)
         appointment = serializer.save()
+        # Отменили или перенесли — клиенту в Telegram, если он подключён
+        notifications.appointment_changed_by_staff(before, appointment)
         return Response(StaffAppointmentSerializer(appointment).data)
 
     def pending_queryset(self):

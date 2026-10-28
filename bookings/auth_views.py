@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from notifications import services as notifications
 from .models import ClientProfile, Appointment
 from .phone import normalize_phone
 from .slots import ACTIVE_STATUSES
@@ -167,5 +168,6 @@ class CancelAppointmentsView(APIView):
 
         appointment.status = 'cancelled'
         appointment.save()
+        notifications.appointment_cancelled_by_client(appointment)
 
         return Response({'message': 'Запись отменена'})

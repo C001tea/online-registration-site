@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'bookings',
     'dashboard',
+    'notifications',
 ]
 
 MIDDLEWARE = [
@@ -192,3 +193,7 @@ if DATABASE_URL:
     DATABASES['default'] = dj_database_url.parse(DATABASE_URL)
 
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Telegram-бот: подтверждения и напоминания (notifications/). Без токена бот выключен
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '').strip()
+TELEGRAM_BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@')
+TELEGRAM_MAX_ATTEMPTS = 8

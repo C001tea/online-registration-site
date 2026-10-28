@@ -23,11 +23,25 @@ services:
     # Наружу не открыт: запросы приходят только через caddy
     expose:
       - "8000"
+    # Код — только из образа: при деплое старый контейнер работает на своём коде
+    # до остановки (папка с кодом раньше подключалась целиком и подменялась git pull)
     volumes:
-      - .:/app
+      - ./.env:/app/.env:ro
     environment:
       - DATABASE_URL=postgres://artacsercs:${DATA_BASE_PASSWORD}@db:5432/business_db
       - SKIP_PREPARE=${SKIP_PREPARE:-0}
+    restart: always
+
+  # Telegram-бот: отправка очереди сообщений и напоминания (notifications/)
+  telegram:
+    build: .
+    depends_on:
+      - db
+    command: python manage.py telegram_worker
+    volumes:
+      - ./.env:/app/.env:ro
+    environment:
+      - DATABASE_URL=postgres://artacsercs:${DATA_BASE_PASSWORD}@db:5432/business_db
     restart: always
 
   caddy:

@@ -10,6 +10,7 @@ from .slots import get_free_slots, ACTIVE_STATUSES
 from datetime import datetime, timedelta
 from django.db.models import Avg, Q
 from django.utils import timezone
+from notifications import services as notifications
 
 
 class HealthView(APIView):
@@ -106,13 +107,21 @@ class AppointmentCreateView(generics.CreateAPIView):
             end_dt = datetime.combine(data['date'], data['start_time']) + timedelta(minutes=service.duration)
             client = self.request.user if self.request.user.is_authenticated else None
 
-            serializer.save(
+            appointment = serializer.save(
                 company=self.get_company(),
                 master=master,
                 status='pending',
                 end_time=end_dt.time(),
                 client=client
             )
+            notifications.appointment_created(appointment, self.request.user)
+        self.appointment = appointment
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        # Кнопка «Подтвердить в Telegram» на экране после записи
+        response.data['telegram_url'] = notifications.client_url(self.appointment)
+        return response
 
 
 
