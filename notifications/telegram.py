@@ -61,10 +61,13 @@ def keyboard(buttons):
     return {'inline_keyboard': [[{'text': text, 'callback_data': data} for text, data in row] for row in buttons]}
 
 
-def send_message(chat_id, text, buttons=None):
+def send_message(chat_id, text, buttons=None, reply_markup=None):
+    """buttons — inline-кнопки; reply_markup — готовая клавиатура (например, «Поделиться номером»)."""
     params = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML', 'disable_web_page_preview': True}
     if buttons:
         params['reply_markup'] = keyboard(buttons)
+    elif reply_markup:
+        params['reply_markup'] = reply_markup
     return call('sendMessage', **params)
 
 

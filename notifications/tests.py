@@ -354,3 +354,113 @@ class SetupCommandTests(TelegramTestCase):
         self.assertEqual(params['url'], 'https://api.example.com/api/telegram/webhook/')
         self.assertEqual(params['secret_token'], telegram.webhook_secret())
         self.assertIn('@salon_test_bot', out.getvalue())
+
+
+class TelegramLoginTests(TelegramTestCase):
+    def begin(self):
+        response = self.api.post('/api/auth/telegram/start/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['url'].startswith('https://t.me/salon_test_bot?start=l_'))
+        return response.data['token']
+
+    def share(self, phone='+37369123456', user_id=CLIENT_CHAT, sender=CLIENT_CHAT, chat_id=CLIENT_CHAT, first='Ирина'):
+        return self.webhook({'update_id': 9, 'message': {
+            'message_id': 5, 'chat': {'id': chat_id, 'type': 'private'}, 'from': {'id': sender},
+            'contact': {'phone_number': phone, 'user_id': user_id, 'first_name': first, 'last_name': 'Р.'}}})
+
+    def code(self):
+        from .models import TelegramLogin
+        return TelegramLogin.objects.latest('created_at').code
+
+    def verify(self, token, code):
+        return self.api.post('/api/auth/telegram/verify/', {'token': token, 'code': code}, format='json')
+
+    def test_new_client_signs_up_with_shared_contact(self):
+        token = self.begin()
+        self.start(f'l_{token}')
+        ask = self.fake.last('sendMessage')
+        self.assertTrue(ask['reply_markup']['keyboard'][0][0]['request_contact'])
+        self.share(phone='37369123456')  # Telegram присылает номер без «+»
+        sent = self.fake.last('sendMessage')
+        self.assertIn(self.code(), sent['text'])
+        self.assertTrue(sent['reply_markup']['remove_keyboard'])
+
+        response = self.verify(token, self.code())
+        self.assertEqual(response.status_code, 200, response.data)
+        self.api.credentials(HTTP_AUTHORIZATION='Bearer ' + response.data['access'])
+        me = self.api.get('/api/auth/me/').data
+        self.assertEqual((me['phone'], me['name']), ('+37369123456', 'Ирина'))
+        # Чат запомнен: подтверждения следующих записей придут без ссылки
+        self.assertTrue(ClientTelegram.objects.filter(user__username='+37369123456', chat_id=CLIENT_CHAT).exists())
+        # Код одноразовый
+        self.assertEqual(self.verify(token, self.code()).status_code, 400)
+
+    def test_guest_bookings_join_account(self):
+        self.book(client_phone='+37369123456')  # записалась без входа
+        token = self.begin()
+        self.start(f'l_{token}')
+        self.share()
+        response = self.verify(token, self.code())
+        self.api.credentials(HTTP_AUTHORIZATION='Bearer ' + response.data['access'])
+        self.assertEqual(len(self.api.get('/api/appointments/my/').data), 1)
+
+    def test_existing_client_keeps_account(self):
+        from bookings.models import ClientProfile
+        user = User.objects.create_user('+37369123456', password='Old-pass-123')
+        ClientProfile.objects.create(user=user, phone='+37369123456', name='Ира')
+        token = self.begin()
+        self.start(f'l_{token}')
+        self.share()
+        response = self.verify(token, self.code())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(User.objects.filter(username='+37369123456').count(), 1)
+        self.assertTrue(User.objects.get(username='+37369123456').check_password('Old-pass-123'))
+
+    def test_forwarded_contact_is_rejected(self):
+        token = self.begin()
+        self.start(f'l_{token}')
+        self.share(user_id=999)  # чужой контакт
+        self.assertIn('свой номер', self.fake.last('sendMessage')['text'])
+        self.assertEqual(self.code(), '')
+        self.assertEqual(self.verify(token, '000000').status_code, 400)
+
+    def test_wrong_codes_and_expiry(self):
+        from .models import TelegramLogin
+        token = self.begin()
+        self.start(f'l_{token}')
+        self.share()
+        for _ in range(5):
+            self.assertEqual(self.verify(token, '000000' if self.code() != '000000' else '111111').data['error'], 'Неверный код')
+        self.assertIn('Слишком много', self.verify(token, self.code()).data['error'])
+
+        token = self.begin()
+        self.start(f'l_{token}')
+        self.share()
+        TelegramLogin.objects.filter(token=token).update(created_at=timezone.now() - timedelta(minutes=11))
+        self.assertIn('устарела', self.verify(token, self.code()).data['error'])
+
+    def test_link_is_bound_to_first_chat(self):
+        token = self.begin()
+        self.start(f'l_{token}')
+        self.start(f'l_{token}', chat_id=6666)
+        self.assertIn('устарела', self.fake.last('sendMessage')['text'])
+        self.share(user_id=6666, sender=6666, chat_id=6666)  # у чужого чата нет входа
+        self.assertIn('устарела', self.fake.last('sendMessage')['text'])
+
+    def test_staff_login_phone_is_not_taken_over(self):
+        User.objects.create_user('+37369123456', password='Staff-pass-123')  # без профиля клиента
+        token = self.begin()
+        self.start(f'l_{token}')
+        self.share()
+        self.assertIn('служебным', self.fake.last('sendMessage')['text'])
+        self.assertEqual(self.verify(token, '123456').status_code, 400)
+
+    @override_settings(TELEGRAM_BOT_TOKEN='')
+    def test_unavailable_without_bot(self):
+        self.assertEqual(self.api.post('/api/auth/telegram/start/').status_code, 503)
+
+    def test_start_rate_limit(self):
+        from .views import LOGIN_STARTS_PER_HOUR
+        for _ in range(LOGIN_STARTS_PER_HOUR):
+            self.assertEqual(self.api.post('/api/auth/telegram/start/').status_code, 200)
+        self.assertEqual(self.api.post('/api/auth/telegram/start/').status_code, 429)
