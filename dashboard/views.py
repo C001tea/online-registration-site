@@ -37,7 +37,7 @@ from .serializers import (
     StaffLoginSerializer, PasswordChangeSerializer, StaffAppointmentSerializer, StaffAppointmentWriteSerializer,
     StaffCategorySerializer, StaffServiceSerializer, StaffMasterSerializer, ScheduleDaySerializer,
     DayOffInputSerializer, MasterAccessSerializer, StaffCompanySerializer,
-    staff_me, schedule_days, day_off_data,
+    staff_me, schedule_days, day_off_data, paid,
 )
 from .tokens import STAFF_SCOPE, StaffRefreshToken, get_staff_tokens, token_matches_password
 
@@ -53,6 +53,8 @@ LOOKUP_WINDOW_SECONDS = 60 * 60
 TOO_MANY_REQUESTS_MESSAGE = 'Слишком много запросов, попробуйте позже'
 PASSWORD_BLOCKED_MESSAGE = 'Слишком много попыток. Попробуйте через 15 минут'
 LOGIN_FAILED_MESSAGE = 'Неверный логин или пароль'
+PAID_LOCKED_FIELDS = ('status', 'date', 'start_time', 'duration', 'master', 'service')
+PAID_LOCKED_MESSAGE = 'Визит оплачен. Чтобы изменить его, владелец сначала отменяет оплату'
 
 
 def parse_date(value):
@@ -202,7 +204,7 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
     lookup_value_regex = r'\d+'
 
     def get_queryset(self):
-        queryset = Appointment.objects.filter(company=self.staff.company).select_related('master', 'service')
+        queryset = Appointment.objects.filter(company=self.staff.company).select_related('master', 'service', 'payment')
         if self.staff.role == 'master':
             # Мастер видит и меняет только свои записи
             queryset = queryset.filter(master=self.staff.master)
@@ -238,6 +240,9 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
 
     def partial_update(self, request, pk=None):
         appointment = self.get_object()
+        # Оплата привязана к визиту (дата, мастер, услуга) — сначала её отменяют
+        if paid(appointment) and any(key in request.data for key in PAID_LOCKED_FIELDS):
+            raise StaffError(PAID_LOCKED_MESSAGE)
         before = notifications.snapshot(appointment)
         serializer = StaffAppointmentWriteSerializer(
             appointment, data=request.data, partial=True, context=self.get_serializer_context()

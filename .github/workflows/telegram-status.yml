@@ -24,4 +24,4 @@ jobs:
           HOST: ${{ secrets.NEW_SERVER_HOST }}
           SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
         run: |
-          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "cd online-registration-site && docker compose exec -T web python manage.py telegram_status && echo && echo 'Лог процесса бота:' && docker compose logs --tail 15 telegram 2>&1 | grep -v -i -E 'chat_id|phone'"
+          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "cd online-registration-site && docker compose exec -T web python manage.py telegram_status && echo && echo 'Лог процесса бота:' && docker compose logs --tail 15 telegram 2>&1 | grep -v -i -E 'chat_id|phone' || true"

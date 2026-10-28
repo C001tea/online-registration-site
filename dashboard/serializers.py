@@ -3,6 +3,7 @@ from datetime import datetime, time
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.auth.validators import UnicodeUsernameValidator
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -85,12 +86,13 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
     master = serializers.SerializerMethodField()
     service = serializers.SerializerMethodField()
     source = serializers.SerializerMethodField()
+    payment = serializers.SerializerMethodField()
 
     class Meta:
         model = Appointment
         fields = [
             'id', 'date', 'start_time', 'end_time', 'duration', 'status', 'master', 'service',
-            'client_name', 'client_phone', 'client_email', 'notes', 'source', 'created_at',
+            'client_name', 'client_phone', 'client_email', 'notes', 'source', 'created_at', 'payment',
         ]
         read_only_fields = fields
 
@@ -112,6 +114,20 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
 
     def get_source(self, obj):
         return 'staff' if obj.created_by_staff else 'online'
+
+    def get_payment(self, obj):
+        payment = paid(obj)
+        if payment is None:
+            return None
+        return {'amount': str(payment.amount), 'discount': str(payment.discount), 'method': payment.method}
+
+
+def paid(appointment):
+    """Оплата визита или None (обратная связь OneToOne без оплаты бросает исключение)."""
+    try:
+        return appointment.payment
+    except ObjectDoesNotExist:
+        return None
 
 
 def client_for_phone(phone):

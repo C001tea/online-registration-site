@@ -1,6 +1,7 @@
-from django.urls import path
+from django.urls import include, path
 from rest_framework.routers import SimpleRouter
 
+from finance.views import CheckoutView
 from notifications.views import StaffTelegramView
 
 from . import views
@@ -22,4 +23,6 @@ urlpatterns = [
     path('days-off/', views.DaysOffListView.as_view(), name='staff-days-off'),
     path('company/', views.CompanyView.as_view(), name='staff-company'),
     path('telegram/', StaffTelegramView.as_view(), name='staff-telegram'),
+    path('appointments/<int:pk>/checkout/', CheckoutView.as_view(), name='staff-checkout'),
+    path('finance/', include('finance.urls')),
 ] + router.urls
