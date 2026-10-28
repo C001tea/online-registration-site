@@ -7,6 +7,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from notifications import services as notifications
 from .models import ClientProfile, Appointment
 from .phone import normalize_phone
+from .i18n import client_lang
 from .rules import cancel_rule_text, client_can_cancel
 from .slots import ACTIVE_STATUSES
 from .login_limit import (
@@ -170,7 +171,8 @@ class CancelAppointmentsView(APIView):
             )
 
         if not client_can_cancel(appointment):
-            return Response({'error': cancel_rule_text(appointment.company)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': cancel_rule_text(appointment.company, client_lang(request))},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         appointment.status = 'cancelled'
         appointment.save()

@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction, connection, DatabaseError
 from django.shortcuts import get_object_or_404
+from .i18n import client_lang
 from .models import Company, Master, Service, Review, Appointment
 from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
 from .slots import get_free_slots, ACTIVE_STATUSES
@@ -112,7 +113,8 @@ class AppointmentCreateView(generics.CreateAPIView):
                 master=master,
                 status='pending',
                 end_time=end_dt.time(),
-                client=client
+                client=client,
+                lang=client_lang(self.request),
             )
             notifications.appointment_created(appointment, self.request.user)
         self.appointment = appointment

@@ -72,3 +72,4 @@ class TelegramLogin(models.Model):
     code = models.CharField(max_length=6, blank=True)
     attempts = models.PositiveSmallIntegerField(default=0)
     used = models.BooleanField(default=False)
+    lang = models.CharField(max_length=2, default='ru')  # язык сайта: на нём отвечает бот

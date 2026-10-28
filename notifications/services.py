@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from bookings.i18n import tr
 from bookings.models import AdminProfile, Appointment
 from bookings.rules import cancel_rule_text, client_can_cancel
 from bookings.slots import ACTIVE_STATUSES
@@ -36,12 +37,13 @@ def enqueue(chat_id, text, buttons=None):
 def client_buttons(link):
     """«Отменить» — только пока правило салона разрешает отмену клиентом."""
     appointment = link.appointment
+    lang = texts.lang_of(appointment)
     cancel = client_can_cancel(appointment)
     if appointment.status == 'pending':
-        row = [('Подтверждаю ✅', f'ok:{link.id}')]
-        return [row + [('Отменить', f'cx:{link.id}')]] if cancel else [row]
+        row = [(tr('Подтверждаю ✅', lang), f'ok:{link.id}')]
+        return [row + [(tr('Отменить', lang), f'cx:{link.id}')]] if cancel else [row]
     if appointment.status == 'confirmed' and cancel:
-        return [[('Отменить запись', f'cx:{link.id}')]]
+        return [[(tr('Отменить запись', lang), f'cx:{link.id}')]]
     return []
 
 
@@ -167,7 +169,7 @@ def link_appointment(chat_id, token):
             reply(chat_id, texts.LINK_NOT_FOUND)
             return
         if link.chat_id and link.chat_id != chat_id:
-            reply(chat_id, texts.LINK_USED)
+            reply(chat_id, tr(texts.LINK_USED, texts.lang_of(link.appointment)))
             return
         link.chat_id = chat_id
         link.save(update_fields=['chat_id'])
@@ -216,29 +218,30 @@ def apply_action(action, link_id, chat_id, message_id):
             return texts.LINK_NOT_FOUND
         appointment = Appointment.objects.select_for_update().get(pk=link.appointment_id)
         link.appointment.status = appointment.status
+        lang = texts.lang_of(appointment)
         editable = appointment.status in ACTIVE_STATUSES and starts_at(appointment) > timezone.now()
         popup = ''
         if action in ('ok', 'cx', 'cy') and not editable:
-            popup = texts.TOO_LATE
+            popup = tr(texts.TOO_LATE, lang)
         elif action in ('cx', 'cy') and not client_can_cancel(appointment):
-            popup = cancel_rule_text(link.appointment.company)
+            popup = cancel_rule_text(link.appointment.company, lang)
             editable = False
         elif action == 'ok' and appointment.status == 'pending':
             appointment.status = 'confirmed'
             appointment.save(update_fields=['status'])
             link.appointment.status = 'confirmed'
-            popup = 'Спасибо, ждём вас!'
+            popup = tr('Спасибо, ждём вас!', lang)
         elif action == 'cy':
             appointment.status = 'cancelled'
             appointment.save(update_fields=['status'])
             link.appointment.status = 'cancelled'
             appointment_cancelled_by_client(link.appointment)
-            popup = 'Запись отменена'
+            popup = tr('Запись отменена', lang)
     text = texts.client_card(link.appointment)
     buttons = client_buttons(link)
     if action == 'cx' and editable:
-        text += texts.CONFIRM_CANCEL
-        buttons = [[('Да, отменить', f'cy:{link.id}'), ('Нет', f'back:{link.id}')]]
+        text += tr(texts.CONFIRM_CANCEL, lang)
+        buttons = [[(tr('Да, отменить', lang), f'cy:{link.id}'), (tr('Нет', lang), f'back:{link.id}')]]
     try:
         telegram.edit_message(chat_id, message_id, text, buttons)
     except telegram.TelegramError as exc:

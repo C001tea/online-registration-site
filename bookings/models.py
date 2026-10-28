@@ -70,6 +70,8 @@ class Appointment(models.Model):
     end_time = models.TimeField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     notes = models.TextField(blank=True)
+    # Язык сайта при записи (ru/ro): на нём бот пишет клиенту
+    lang = models.CharField(max_length=2, default='ru')
     reminder_sent = models.BooleanField(default=False)
     # Когда клиент дал согласие на обработку персональных данных (онлайн-запись)
     consent_at = models.DateTimeField(null=True, blank=True)

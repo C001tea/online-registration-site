@@ -7,6 +7,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from bookings.i18n import MONTHS
 from bookings.models import AdminProfile, Appointment, Company, Master, MasterSchedule, Service
 from dashboard.tokens import get_staff_tokens
 from . import services, telegram
@@ -15,6 +16,7 @@ from .models import AppointmentTelegram, ClientTelegram, OutgoingMessage, StaffL
 BOT = dict(TELEGRAM_BOT_TOKEN='123:test', TELEGRAM_BOT_USERNAME='salon_test_bot')
 CLIENT_CHAT = 5001
 OWNER_CHAT = 7001
+MONTHS_RO = MONTHS["ro"]
 
 
 class FakeTelegram:
@@ -479,3 +481,81 @@ class CancelRuleInBotTests(TelegramTestCase):
         self.assertIn('не позже чем за 400 ч', self.fake.last('answerCallbackQuery')['text'])
         self.press(f'ok:{link.id}')
         self.assertEqual(Appointment.objects.get().status, 'confirmed')
+
+
+class RomanianTests(TelegramTestCase):
+    """Сайт на румынском (X-Lang: ro): ответы API, язык записи, сообщения бота клиенту."""
+
+    def setUp(self):
+        super().setUp()
+        self.api.credentials(HTTP_X_LANG='ro')
+
+    def test_booking_in_romanian_gets_romanian_bot_messages(self):
+        response = self.book(notes='Vreau french')
+        self.assertEqual(response.status_code, 201, response.data)
+        appointment = Appointment.objects.get()
+        self.assertEqual(appointment.lang, 'ro')
+        # Салону — по-русски, с пометкой о языке клиента
+        self.assertIn('Язык клиента: румынский', self.queued(OWNER_CHAT)[0])
+        link = AppointmentTelegram.objects.get()
+        self.start(f'a_{link.token}')
+        card = self.fake.last('sendMessage')
+        self.assertIn('Serviciu: Маникюр', card['text'])
+        self.assertIn('Maestru: Анна', card['text'])
+        self.assertIn(MONTHS_RO[self.day.month - 1], card['text'])
+        self.assertIn('Așteptăm confirmarea', card['text'])
+        labels = [b['text'] for row in card['reply_markup']['inline_keyboard'] for b in row]
+        self.assertEqual(labels, ['Confirm ✅', 'Anulează'])
+        self.press(f'cx:{link.id}')
+        self.assertIn('Sigur anulați programarea?', self.fake.last('editMessageText')['text'])
+        self.press(f'cy:{link.id}')
+        self.assertEqual(self.fake.last('answerCallbackQuery')['text'], 'Programarea a fost anulată')
+
+    def test_reminders_in_romanian(self):
+        link = self.linked_appointment()
+        appointment = link.appointment
+        services.queue_reminders(now=services.starts_at(appointment) - timedelta(hours=23))
+        self.assertIn('Vă reamintim de programarea de mâine', self.queued(CLIENT_CHAT)[-1])
+
+    def test_api_errors_in_romanian(self):
+        response = self.book(consent=False)
+        self.assertEqual(response.status_code, 400)
+        # Перевод — в теле ответа (response.data в тестах — исходные данные до перевода)
+        self.assertIn('Este necesar acordul', str(response.json()))
+        # Встроенные сообщения DRF — переводом DRF
+        response = self.book(client_name='')
+        self.assertNotIn('Это поле', str(response.json()))
+        self.assertIn('câmp', str(response.json()))
+        # Без заголовка — по-русски
+        self.api.credentials()
+        self.assertIn('согласие', str(self.book(consent=False).json()))
+
+    def test_cancel_rule_in_romanian(self):
+        self.company.cancel_hours = 200  # запись через 7 дней — отменить уже нельзя
+        self.company.phone = '+37322000000'
+        self.company.save()
+        link = self.linked_appointment()
+        self.press(f'cx:{link.id}')
+        popup = self.fake.last('answerCallbackQuery')['text']
+        self.assertEqual(popup, 'Programarea poate fi anulată cel târziu cu 200 ore înainte de vizită. '
+                                'Sunați la salon: +37322000000')
+
+    def test_success_data_is_not_translated(self):
+        self.master.name = 'Нет'
+        self.master.save()
+        names = [m['name'] for m in self.api.get(f'/api/companies/{self.company.slug}/masters/').data]
+        self.assertEqual(names, ['Нет'])
+
+    def test_telegram_login_in_romanian(self):
+        response = self.api.post('/api/auth/telegram/start/')
+        token = response.data['token']
+        self.start(f'l_{token}')
+        ask = self.fake.last('sendMessage')
+        self.assertIn('Apăsați butonul', ask['text'])
+        self.assertEqual(ask['reply_markup']['keyboard'][0][0]['text'], '📱 Trimite numărul')
+        self.webhook({'update_id': 9, 'message': {
+            'message_id': 5, 'chat': {'id': CLIENT_CHAT, 'type': 'private'}, 'from': {'id': CLIENT_CHAT},
+            'contact': {'phone_number': '37369123456', 'user_id': CLIENT_CHAT, 'first_name': 'Ana'}}})
+        self.assertIn('Codul de autentificare', self.fake.last('sendMessage')['text'])
+        response = self.api.post('/api/auth/telegram/verify/', {'token': token, 'code': '000000x'}, format='json')
+        self.assertEqual(response.json()['error'], 'Cod greșit')

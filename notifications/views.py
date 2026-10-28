@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from bookings.auth_views import get_token_for_user
+from bookings.i18n import client_lang
 from bookings.login_limit import increment_counter
 from dashboard.permissions import IsStaff
 from . import login, services, telegram
@@ -71,7 +72,7 @@ class TelegramLoginStartView(APIView):
         ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR', '')).split(',')[0].strip()
         if increment_counter(f'tglogin:{ip}', 60 * 60) > LOGIN_STARTS_PER_HOUR:
             return Response({'error': 'Слишком много попыток. Попробуйте через час'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-        attempt = login.start()
+        attempt = login.start(client_lang(request))
         return Response({'token': attempt.token, 'url': f'https://t.me/{username}?start=l_{attempt.token}',
                          'expires_in': int(login.LOGIN_TTL.total_seconds())})
 
