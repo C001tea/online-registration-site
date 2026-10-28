@@ -1116,3 +1116,54 @@ class CreateStaffCommandTests(TestCase):
 class MigrationsTests(TestCase):
     def test_no_missing_migrations(self):
         call_command('makemigrations', '--check', '--dry-run', stdout=StringIO())
+
+
+class SeedDemoTests(TestCase):
+    """Демо-салон: изолирован от настоящих салонов, пересоздаётся, в нём есть все виды записей."""
+
+    def run_seed(self, **options):
+        out = StringIO()
+        call_command('seed_demo', password='Demo-pass-2026', stdout=out, **options)
+        return out.getvalue()
+
+    def test_builds_week_of_activity_without_touching_other_salons(self):
+        real, *_ = make_salon('real')
+        Appointment.objects.create(company=real, client_name='Настоящий клиент', client_phone='+37369000009',
+                                   date=timezone.localdate(), start_time=time(10), end_time=time(11))
+        self.assertIn('Демо-салон готов', self.run_seed())
+        self.run_seed()  # повторный запуск пересоздаёт, а не дублирует
+        demo = Company.objects.get(slug='demo')
+        self.assertEqual(Company.objects.filter(slug='demo').count(), 1)
+        self.assertEqual(Master.objects.filter(company=demo).count(), 4)
+        statuses = set(Appointment.objects.filter(company=demo).values_list('status', flat=True))
+        self.assertTrue({'pending', 'confirmed', 'completed', 'cancelled'} <= statuses)
+        self.assertTrue(Appointment.objects.filter(company=demo, created_by_staff=True).exists())
+        self.assertTrue(Appointment.objects.filter(company=demo, created_by_staff=False).exists())
+        self.assertTrue(demo.payments.exists())
+        self.assertTrue(demo.salary_payouts.exists())
+        self.assertEqual(Appointment.objects.filter(company=real).count(), 1)
+
+    def test_no_overlaps_and_inside_schedule(self):
+        self.run_seed()
+        demo = Company.objects.get(slug='demo')
+        for master in Master.objects.filter(company=demo):
+            schedule = {s.day_of_week: s for s in master.schedule.all()}
+            by_day = {}
+            for a in Appointment.objects.filter(master=master):
+                day = schedule[a.date.weekday()]
+                self.assertTrue(day.is_working, (master.name, a.date))
+                self.assertGreaterEqual(a.start_time, day.start_time)
+                self.assertLessEqual(a.end_time, day.end_time)
+                by_day.setdefault(a.date, []).append((a.start_time, a.end_time))
+            for slots in by_day.values():
+                slots.sort()
+                for (_, end), (start, _) in zip(slots, slots[1:]):
+                    self.assertLessEqual(end, start)
+
+    def test_logins_work_and_weak_password_rejected(self):
+        self.run_seed()
+        self.assertEqual(get_staff(User.objects.get(username='demo')).role, 'owner')
+        self.assertEqual(get_staff(User.objects.get(username='demo_admin')).role, 'admin')
+        self.assertEqual(get_staff(User.objects.get(username='demo_anna')).role, 'master')
+        with self.assertRaises(CommandError):
+            call_command('seed_demo', password='123', stdout=StringIO())
