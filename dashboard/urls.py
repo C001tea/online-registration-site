@@ -4,7 +4,7 @@ from rest_framework.routers import SimpleRouter
 from finance.views import CheckoutView
 from notifications.views import StaffTelegramView
 
-from . import views
+from . import clients, views
 
 # SimpleRouter — без корневой страницы API (она была бы доступна без прав)
 router = SimpleRouter()
@@ -20,6 +20,9 @@ urlpatterns = [
     path('me/', views.StaffMeView.as_view(), name='staff-me'),
     path('free-times/', views.FreeTimesView.as_view(), name='staff-free-times'),
     path('clients/lookup/', views.ClientLookupView.as_view(), name='staff-client-lookup'),
+    path('clients/', clients.ClientListView.as_view(), name='staff-clients'),
+    path('clients/card/', clients.ClientCardView.as_view(), name='staff-client-card'),
+    path('clients/note/', clients.ClientNoteView.as_view(), name='staff-client-note'),
     path('days-off/', views.DaysOffListView.as_view(), name='staff-days-off'),
     path('company/', views.CompanyView.as_view(), name='staff-company'),
     re_path(r'^company/(?P<kind>logo|main-photo)/$', views.CompanyPhotoView.as_view(), name='staff-company-photo'),
