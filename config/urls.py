@@ -14,13 +14,20 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
 from django.contrib import admin
 from django.urls import path, include
 
+from bookings.auth_views import ClientTokenRefreshView
+from bookings.security import limit_admin_login
 from notifications.views import TelegramLoginStartView, TelegramLoginVerifyView
 
+# Вход во встроенную админку Django — с тем же лимитом перебора, что и вход в панель
+admin.site.login = limit_admin_login(admin.site.login)
+
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path(f'{settings.DJANGO_ADMIN_PATH}/', admin.site.urls),
+    path('api/auth/refresh/', ClientTokenRefreshView.as_view(), name='client-refresh'),
     path('api/auth/telegram/start/', TelegramLoginStartView.as_view(), name='telegram-login-start'),
     path('api/auth/telegram/verify/', TelegramLoginVerifyView.as_view(), name='telegram-login-verify'),
     path('api/', include('bookings.urls')),

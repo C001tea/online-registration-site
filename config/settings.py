@@ -40,8 +40,8 @@ CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', '')
 if API_DOMAIN:
     CSRF_TRUSTED_ORIGINS.append(f'https://{API_DOMAIN}')
 
-# Куки Django admin — только по HTTPS (включать после перехода на домен)
-HTTPS_ONLY = os.getenv('HTTPS_ONLY', 'False').lower() in ('true', '1', 'yes')
+# Куки Django admin — только по HTTPS. С доменом API (HTTPS через Caddy) — по умолчанию да
+HTTPS_ONLY = os.getenv('HTTPS_ONLY', 'True' if API_DOMAIN else 'False').lower() in ('true', '1', 'yes')
 SESSION_COOKIE_SECURE = HTTPS_ONLY
 CSRF_COOKIE_SECURE = HTTPS_ONLY
 
@@ -160,10 +160,26 @@ CORS_ALLOW_HEADERS = (*default_headers, 'x-lang')
 if '*' in CORS_ALLOWED_ORIGINS:
     CORS_ALLOWED_ORIGINS = []
 
+# Токены клиентов сайта: access живёт час (украденный токен быстро бесполезен), сайт сам
+# обновляет его по refresh (/api/auth/refresh/), поэтому вход держится 30 дней.
+# У персонала свои сроки — dashboard/tokens.py
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
 }
+
+# Общий кеш в базе: счётчики лимитов (перебор паролей, спам записей) одни на все процессы
+# и не сбрасываются при деплое. Таблицу создаёт createcachetable (deploy.sh, docker-entrypoint.sh)
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
+}
+
+# Адрес встроенной админки Django — из .env (DJANGO_ADMIN_PATH): нестандартный путь
+# не находят сканеры, перебирающие /admin/. Пусто — admin/
+DJANGO_ADMIN_PATH = os.getenv('DJANGO_ADMIN_PATH', '').strip().strip('/') or 'admin'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

@@ -6,6 +6,7 @@ set -e
 # При обычном запуске (перезагрузка сервера) — выполняем
 if [ "$SKIP_PREPARE" != "1" ]; then
     python manage.py migrate --noinput
+    python manage.py createcachetable  # общий кеш лимитов (CACHES в settings.py)
 fi
 
 # --preload: Django загружается до открытия порта. Иначе порт открыт сразу,

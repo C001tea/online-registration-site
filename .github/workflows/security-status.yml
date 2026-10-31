@@ -1,0 +1,50 @@
+# Проверка безопасности сервера (только чтение, ничего не меняет): вход по SSH,
+# автообновления, открытые наружу порты, нужна ли перезагрузка.
+# Actions → Security status → Run workflow. Также раз в неделю.
+name: Security status
+
+on:
+  schedule:
+    - cron: '23 3 * * 1'   # понедельник 03:23 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Проверка
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+        run: |
+          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" 'bash -s' <<'SCRIPT'
+          set -u
+          FAIL=0
+          echo "== Вход по SSH =="
+          sudo -n sshd -T 2>/dev/null | grep -E '^(passwordauthentication|permitrootlogin|pubkeyauthentication|kbdinteractiveauthentication) '
+          if sudo -n sshd -T 2>/dev/null | grep -q '^passwordauthentication yes'; then
+            echo "ОШИБКА: вход по паролю разрешён"; FAIL=1
+          fi
+          echo "== Автоматические обновления безопасности =="
+          systemctl is-enabled unattended-upgrades 2>/dev/null || { echo "ОШИБКА: unattended-upgrades выключен"; FAIL=1; }
+          grep -h 'Unattended-Upgrade "' /etc/apt/apt.conf.d/20auto-upgrades 2>/dev/null
+          echo "Ожидают обновления пакетов: $(apt list --upgradable 2>/dev/null | grep -c upgradable)"
+          if [ -f /var/run/reboot-required ]; then echo "Нужна перезагрузка (обновлено ядро или библиотеки)"; fi
+          echo "== Порты, открытые наружу =="
+          sudo -n ss -tlnH 2>/dev/null | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|::1)' | sort -u
+          echo "== Публикация портов Docker =="
+          docker ps --format '{{.Names}}: {{.Ports}}'
+          echo "== Файрвол (INPUT) =="
+          sudo -n iptables -L INPUT -n 2>/dev/null | head -8
+          exit $FAIL
+          SCRIPT

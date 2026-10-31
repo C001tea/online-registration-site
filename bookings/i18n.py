@@ -28,6 +28,11 @@ RO = {
     'Отменить запись можно не позже чем за {hours} ч до визита.':
         'Programarea poate fi anulată cel târziu cu {hours} ore înainte de vizită.',
     ' Позвоните в салон: {phone}': ' Sunați la salon: {phone}',
+    'Слишком много запросов. Попробуйте позже': 'Prea multe cereri. Încercați mai târziu',
+    'Не удалось отправить запись. Обновите страницу и попробуйте ещё раз':
+        'Programarea nu a putut fi trimisă. Reîncărcați pagina și încercați din nou',
+    'У вас уже есть 3 предстоящие записи в этом салоне. Чтобы записаться ещё, позвоните в салон':
+        'Aveți deja 3 programări viitoare la acest salon. Pentru a vă programa din nou, sunați la salon',
     # --- Отзывы ---
     'Необходима авторизация': 'Este necesară autentificarea',
     'Нельзя оставить отзыв самому себе': 'Nu vă puteți lăsa o recenzie singur',
