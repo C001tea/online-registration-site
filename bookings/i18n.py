@@ -89,8 +89,19 @@ RO = {
     'Нет': 'Nu',
     'Спасибо, ждём вас!': 'Mulțumim, vă așteptăm!',
     # --- Чёрный список ---
-    '⚠️ При визите нужно оплатить штраф за пропущенную ранее запись: {amount}.':
-        '⚠️ La vizită va trebui să achitați amenda pentru programarea ratată anterior: {amount}.',
+    '⚠️ <b>Неоплаченный штраф: {amount}</b>': '⚠️ <b>Amendă neachitată: {amount}</b>',
+    'вы не пришли на {service}': 'nu v-ați prezentat la {service}',
+    'вы отменили {service} меньше чем за {hours} ч до визита':
+        'ați anulat {service} cu mai puțin de {hours} ore înainte de vizită',
+    'запись': 'programare',
+    'за неявку или отмену меньше чем за {hours} ч до визита':
+        'pentru neprezentare sau anulare cu mai puțin de {hours} ore înainte de vizită',
+    'за неявку': 'pentru neprezentare',
+    'Согласно правилам салона, с которыми вы ознакомились при записи, {rule} взимается штраф '
+    '{percent}% стоимости услуги.':
+        'Conform regulilor salonului, cu care ați luat cunoștință la programare, {rule} se aplică o amendă '
+        'de {percent}% din prețul serviciului.',
+    '💳 Пожалуйста, оплатите его в салоне при этом визите.': '💳 Vă rugăm să o achitați la salon la această vizită.',
     '⚠️ До визита меньше {hours} ч: при отмене будет начислен штраф {amount} '
     '(оплата в салоне при следующем визите).':
         '⚠️ Până la vizită au rămas mai puțin de {hours} ore: la anulare se va aplica o amendă de {amount} '

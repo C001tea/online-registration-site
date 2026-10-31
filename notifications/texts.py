@@ -55,17 +55,75 @@ def money(value):
     return f'{value:.2f}'.rstrip('0').rstrip('.') + ' L'
 
 
-def staff_new(appointment, debt=None):
+# Рамка блока чёрного списка — чтобы он не сливался с текстом записи
+DIVIDER = '━━━━━━━━━━━━━━━━'
+
+
+def penalty_reason(penalty, lang='ru', who='client'):
+    """«28 октября, 14:00 — не пришёл(-ли) на «Маникюр» (200 L)» — за что штраф."""
+    a = penalty.appointment
+    when_text = f'{a.date.day} {MONTHS[lang][a.date.month - 1]}, {a.start_time:%H:%M}'
+    service = f'«{escape(a.service.name)}» ({money(a.service.price)})' if a.service else ''
+    if penalty.kind == 'no_show':
+        what = tr('не пришёл на {service}, не предупредив' if who == 'staff' else 'вы не пришли на {service}',
+                  lang, service=service or tr('запись', lang))
+    else:
+        what = tr('отменил {service} меньше чем за {hours} ч до визита' if who == 'staff'
+                  else 'вы отменили {service} меньше чем за {hours} ч до визита',
+                  lang, service=service or tr('запись', lang), hours=a.company.late_cancel_hours)
+    return f'• {when_text} — {what}'
+
+
+def staff_blacklist(penalties):
+    """Блок для салона: почему клиент в чёрном списке и что сделать при визите."""
+    if not penalties:
+        return ''
+    company = penalties[0].company
+    debt = sum(p.amount for p in penalties if p.status == 'unpaid')
+    lines = ['', '', DIVIDER, '⛔ <b>КЛИЕНТ В ЧЁРНОМ СПИСКЕ</b>', '', '<b>Почему:</b>']
+    for p in penalties:
+        state = f'штраф {money(p.amount)} — <b>не оплачен</b>' if p.status == 'unpaid' else f'штраф {money(p.amount)} оплачен'
+        lines.append(f'{penalty_reason(p, who="staff")}\n   {state}')
+    lines.append('')
+    if debt:
+        lines += [
+            f'💰 <b>При визите получить: {money(debt)}</b>',
+            f'Это {company.penalty_percent}% стоимости пропущенной услуги — по правилам салона, '
+            f'которые клиент видит при записи.',
+            'В панели штраф сам добавится к счёту в окне «Оплата».',
+        ]
+    else:
+        lines.append('Долгов нет — штрафы оплачены. Клиент уже пропускал записи: напомните о правилах салона.')
+    lines.append(DIVIDER)
+    return '\n'.join(lines)
+
+
+def staff_new(appointment, penalties=()):
     note = f'\nКомментарий: {escape(appointment.notes)}' if appointment.notes else ''
     lang = '\nЯзык клиента: румынский' if lang_of(appointment) == 'ro' else ''
-    black = f'\n⚠️ <b>Чёрный список</b>: долг {money(debt)} — получить при визите' if debt else ''
     return (f'🆕 <b>Новая запись</b>\n{details(appointment)}\n'
-            f'Клиент: {escape(appointment.client_name)}, {escape(appointment.client_phone)}{note}{lang}{black}')
+            f'Клиент: {escape(appointment.client_name)}, {escape(appointment.client_phone)}{note}{lang}'
+            f'{staff_blacklist(list(penalties))}')
 
 
-def debt_note(appointment, debt):
-    return '\n\n' + tr('⚠️ При визите нужно оплатить штраф за пропущенную ранее запись: {amount}.',
-                        lang_of(appointment), amount=money(debt))
+def debt_note(appointment, unpaid):
+    """Блок для клиента: неоплаченный штраф, за что и где оплатить (по правилам салона)."""
+    lang = lang_of(appointment)
+    company = appointment.company
+    debt = sum(p.amount for p in unpaid)
+    rule = (tr('за неявку или отмену меньше чем за {hours} ч до визита', lang, hours=company.late_cancel_hours)
+            if company.late_cancel_hours else tr('за неявку', lang))
+    lines = ['', '', DIVIDER, tr('⚠️ <b>Неоплаченный штраф: {amount}</b>', lang, amount=money(debt)), '']
+    lines += [penalty_reason(p, lang) for p in unpaid]
+    lines += [
+        '',
+        tr('Согласно правилам салона, с которыми вы ознакомились при записи, {rule} взимается штраф '
+           '{percent}% стоимости услуги.', lang, rule=rule, percent=company.penalty_percent),
+        '',
+        tr('💳 Пожалуйста, оплатите его в салоне при этом визите.', lang),
+        DIVIDER,
+    ]
+    return '\n'.join(lines)
 
 
 def late_cancel_warning(appointment, fee):
