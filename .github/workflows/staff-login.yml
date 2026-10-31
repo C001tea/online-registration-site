@@ -1,0 +1,52 @@
+# Логины панели салона и смена пароля (забыли пароль).
+# Actions → Staff login → Run workflow:
+#   без логина — покажет, какие логины есть у салона (пароли не показываются: их нет в открытом виде);
+#   с логином — задаст ему новый пароль из секрета STAFF_NEW_PASSWORD (через stdin, в лог не попадает).
+name: Staff login
+
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: 'slug салона'
+        default: jcnails
+      username:
+        description: 'логин, которому сменить пароль (пусто — только показать логины)'
+        required: false
+        default: ''
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Выполнить
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          COMPANY: ${{ inputs.company }}
+          LOGIN: ${{ inputs.username }}
+          PASSWORD: ${{ secrets.STAFF_NEW_PASSWORD }}
+        run: |
+          case "$COMPANY" in *[!a-z0-9_-]*|"") echo "::error::Недопустимый slug"; exit 1 ;; esac
+          if [ -z "$LOGIN" ]; then
+            ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" \
+              "cd online-registration-site && docker compose exec -T web python manage.py staff_login --company '$COMPANY'"
+          else
+            case "$LOGIN" in *[!A-Za-z0-9_.@+-]*) echo "::error::Недопустимый логин"; exit 1 ;; esac
+            if [ -z "$PASSWORD" ]; then
+              echo "::error::Не задан секрет STAFF_NEW_PASSWORD (Settings → Secrets and variables → Actions)"
+              exit 1
+            fi
+            printf '%s\n' "$PASSWORD" | ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" \
+              "cd online-registration-site && docker compose exec -T web python manage.py staff_login --company '$COMPANY' --username '$LOGIN' --password-stdin"
+          fi
