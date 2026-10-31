@@ -1,0 +1,80 @@
+# Тестовые данные в настоящем салоне JcNails: посмотреть, залить, стереть.
+# Actions → JC test data → Run workflow. Перед seed и cleanup на сервере делается копия базы
+# (~/backups/before-jc-test-*.dump). В лог попадают только названия и количества.
+# Что делает каждое действие — dashboard/management/commands/jc_test_data.py.
+name: JC test data
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'inspect — посмотреть, seed — залить тестовое, cleanup — стереть тестовое'
+        type: choice
+        options: [inspect, seed, cleanup]
+        default: inspect
+      hide:
+        description: 'seed: имена мастеров, которых скрыть (через запятую)'
+        required: false
+        default: ''
+      cleanup_all:
+        description: 'cleanup: стереть ВСЕ записи, оплаты и кассу салона (только до запуска!)'
+        type: boolean
+        default: false
+      unhide:
+        description: 'cleanup: вернуть скрытых мастеров'
+        type: boolean
+        default: false
+      confirm:
+        description: 'seed/cleanup: поставьте галочку, иначе cleanup только покажет, что удалит'
+        type: boolean
+        default: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Выполнить
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          ACTION: ${{ inputs.action }}
+          HIDE: ${{ inputs.hide }}
+          ALL: ${{ inputs.cleanup_all }}
+          UNHIDE: ${{ inputs.unhide }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          # Значения из полей — только через переменные окружения и проверку, не в команду напрямую
+          case "$ACTION" in inspect|seed|cleanup) ;; *) echo "::error::Неизвестное действие"; exit 1 ;; esac
+          ARGS="$ACTION"
+          if [ "$ACTION" = seed ] && [ -n "$HIDE" ]; then
+            ARGS="$ARGS --hide"
+            IFS=',' read -ra NAMES <<< "$HIDE"
+            for name in "${NAMES[@]}"; do
+              name=$(echo "$name" | sed 's/^ *//; s/ *$//')
+              case "$name" in *[!A-Za-zА-Яа-яЁё0-9\ _.-]*|"") echo "::error::Недопустимое имя мастера"; exit 1 ;; esac
+              ARGS="$ARGS '$name'"
+            done
+          fi
+          [ "$ACTION" = cleanup ] && [ "$ALL" = true ] && ARGS="$ARGS --all"
+          [ "$ACTION" = cleanup ] && [ "$UNHIDE" = true ] && ARGS="$ARGS --unhide"
+          [ "$ACTION" != inspect ] && [ "$CONFIRM" = true ] && ARGS="$ARGS --yes"
+          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "
+            set -e
+            cd online-registration-site
+            if [ '$ACTION' != inspect ] && [ '$CONFIRM' = true ]; then
+              mkdir -p ~/backups
+              docker exec postgres_db pg_dump -U artacsercs -Fc business_db > ~/backups/before-jc-test-\$(date -u +%Y%m%d-%H%M).dump
+              echo 'Копия базы перед изменением: ~/backups/before-jc-test-*.dump'
+            fi
+            docker compose exec -T web python manage.py jc_test_data $ARGS
+          "
