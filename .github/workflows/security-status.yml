@@ -1,5 +1,5 @@
 # Проверка безопасности сервера (только чтение, ничего не меняет): вход по SSH,
-# автообновления, открытые наружу порты, нужна ли перезагрузка.
+# автообновления, открытые наружу порты, нужна ли перезагрузка, выключен ли DEBUG.
 # Actions → Security status → Run workflow. Также раз в неделю.
 name: Security status
 
@@ -46,5 +46,15 @@ jobs:
           docker ps --format '{{.Names}}: {{.Ports}}'
           echo "== Файрвол (INPUT) =="
           sudo -n iptables -L INPUT -n 2>/dev/null | head -8
+          echo "== Приложение =="
+          D=$(grep -s '^API_DOMAIN=' online-registration-site/.env | cut -d= -f2-)
+          if [ -n "$D" ]; then
+            if curl -s -m 15 "https://$D/no-such-page-check/" | grep -q 'URLconf'; then
+              echo "ОШИБКА: включён DEBUG — посторонним видны отладочные страницы"; FAIL=1
+            else
+              echo "DEBUG выключен"
+            fi
+            echo "Встроенная админка Django по адресу /admin/: HTTP $(curl -s -o /dev/null -m 15 -w '%{http_code}' "https://$D/admin/login/") (404 — путь изменён)"
+          fi
           exit $FAIL
           SCRIPT

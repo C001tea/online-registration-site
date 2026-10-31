@@ -1,0 +1,77 @@
+# Усиление защиты сервера. Actions → Server hardening → Run workflow:
+#   harden — выключить rpcbind (порт 111, не нужен сайту) и вход root по SSH
+#            (вход остаётся у пользователя сервера по ключу). Без простоя сайта.
+#   reboot — перезагрузить сервер, чтобы применились обновления ядра.
+#            Сайт недоступен ~1–2 минуты: запускать ночью.
+name: Server hardening
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Действие
+        required: true
+        type: choice
+        options:
+          - harden
+          - reboot
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Усиление (rpcbind, вход root)
+        if: inputs.action == 'harden'
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+        run: |
+          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" 'bash -s' <<'SCRIPT'
+          set -eu
+          echo "== rpcbind =="
+          sudo systemctl disable --now rpcbind.socket rpcbind.service 2>/dev/null || true
+          sudo systemctl mask rpcbind.socket rpcbind.service 2>/dev/null || true
+          sudo ss -tlnH | grep -q ':111 ' && echo "порт 111 всё ещё открыт" || echo "порт 111 закрыт"
+          echo "== Вход root по SSH =="
+          printf 'PermitRootLogin no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n' \
+            | sudo tee /etc/ssh/sshd_config.d/10-hardening.conf >/dev/null
+          # Проверяем конфиг до применения: с ошибкой ssh не перезапускаем
+          if sudo sshd -t; then
+            sudo systemctl reload ssh 2>/dev/null || sudo systemctl reload sshd
+            sudo sshd -T | grep -E '^(permitrootlogin|passwordauthentication) '
+          else
+            sudo rm -f /etc/ssh/sshd_config.d/10-hardening.conf
+            echo "::error::Конфиг SSH не прошёл проверку — изменения отменены"; exit 1
+          fi
+          SCRIPT
+
+      - name: Вход по SSH работает
+        if: inputs.action == 'harden'
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+        run: ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" 'echo "вход по ключу: ok"'
+
+      - name: Перезагрузка
+        if: inputs.action == 'reboot'
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+        run: |
+          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" 'sudo systemctl reboot' || true
+          sleep 60
+          for i in $(seq 1 30); do
+            if curl -fsS -m 10 https://api.timepoint.tech/api/health/; then echo; echo "сайт снова работает"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::Сайт не ответил за 6 минут после перезагрузки"; exit 1
