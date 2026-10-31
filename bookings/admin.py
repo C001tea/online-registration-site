@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    Company, Master, Service, ServiceCategory, Appointment, MasterSchedule, ClientProfile, AdminProfile, MasterDayOff
+    Company, Master, Service, ServiceCategory, Appointment, MasterSchedule, ClientProfile, AdminProfile, MasterDayOff, MasterWorkDay
 )
 
 admin.site.register(Company)
@@ -15,6 +15,7 @@ admin.site.register(Appointment)
 admin.site.register(MasterSchedule)
 admin.site.register(ClientProfile)
 admin.site.register(MasterDayOff)
+admin.site.register(MasterWorkDay)
 
 
 @admin.register(AdminProfile)

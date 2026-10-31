@@ -760,7 +760,7 @@ class BusyTimeTests(StaffTestCase):
         self.assertEqual(data['times'][:5], ['09:00', '11:00', '11:15', '11:30', '11:45'])
         self.assertTrue(data['working'])
         self.assertFalse(data['day_off'])
-        self.assertEqual(data['schedule'], {'start_time': '09:00', 'end_time': '18:00'})
+        self.assertEqual(data['schedule'], {'start_time': '09:00', 'end_time': '18:00', 'break_start': None, 'break_end': None})
 
         data = self.api.get('/api/staff/free-times/', {**params, 'exclude': appointment.id}).data
         self.assertEqual(data['times'][:4], ['09:00', '09:15', '09:30', '09:45'])
@@ -920,7 +920,8 @@ class DirectoryTests(StaffTestCase):
         response = self.api.put(url, week, format='json')
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data[self.day.weekday()], {
-            'day_of_week': self.day.weekday(), 'is_working': True, 'start_time': '12:00', 'end_time': '14:00'
+            'day_of_week': self.day.weekday(), 'is_working': True, 'start_time': '12:00', 'end_time': '14:00',
+            'break_start': None, 'break_end': None,
         })
         other_day = (self.day.weekday() + 1) % 7
         self.assertEqual(response.data[other_day]['is_working'], False)
