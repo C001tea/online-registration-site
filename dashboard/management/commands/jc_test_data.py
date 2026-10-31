@@ -22,7 +22,7 @@ from django.utils import timezone
 
 from bookings.models import AdminProfile, Appointment, Company, Master, MasterSchedule, Service
 from dashboard.models import ClientNote
-from finance.models import CashOperation, Payment, SalaryPayout, SalaryScheme
+from finance.models import CashOperation, Payment, Penalty, SalaryPayout, SalaryScheme
 from .seed_demo import Command as Demo
 
 TAG = '[тест]'
@@ -155,6 +155,7 @@ class Command(BaseCommand):
                 'ВСЕХ записей салона': Appointment.objects.filter(company=company).count(),
                 'ВСЕХ оплат': Payment.objects.filter(company=company).count(),
                 'ВСЕХ операций кассы': CashOperation.objects.filter(company=company).count(),
+                'штрафов (чёрный список)': Penalty.objects.filter(company=company).count(),
                 'заметок о клиентах': ClientNote.objects.filter(company=company).count(),
             })
         self.stdout.write('Будет удалено: ' + ', '.join(f'{k} {v}' for k, v in plan.items()))
@@ -170,7 +171,7 @@ class Command(BaseCommand):
             test_appointments.delete()
             if options['all']:
                 CashOperation.objects.filter(company=company).delete()  # выплаты каскадом
-                Appointment.objects.filter(company=company).delete()  # оплаты каскадом
+                Appointment.objects.filter(company=company).delete()  # оплаты и штрафы каскадом
                 ClientNote.objects.filter(company=company).delete()
             test_masters.delete()
             if options['unhide']:

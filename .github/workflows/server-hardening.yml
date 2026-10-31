@@ -60,7 +60,8 @@ jobs:
         env:
           HOST: ${{ secrets.NEW_SERVER_HOST }}
           SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
-        run: ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" 'echo "вход по ключу: ok"'
+        run: |
+          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" 'echo "вход по ключу работает"'
 
       - name: Перезагрузка
         if: inputs.action == 'reboot'
