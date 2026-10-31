@@ -18,6 +18,9 @@ class Company(models.Model):
     # клиентом позже чем за late_cancel_hours ч до визита (0 — за позднюю отмену не штрафуем)
     penalty_percent = models.PositiveSmallIntegerField(default=50)
     late_cancel_hours = models.PositiveSmallIntegerField(default=3)
+    # Онлайн-записи сразу «Подтверждена» (для клиентов без Telegram); иначе — «Ожидает»,
+    # подтверждает клиент в боте или администратор в панели
+    auto_confirm = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
