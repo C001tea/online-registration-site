@@ -12,8 +12,10 @@ from bookings.models import Appointment
 from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES
 from .errors import StaffError
+from finance import penalties
+from finance.models import METHOD_CHOICES, Penalty
 from .models import ClientNote
-from .permissions import IsStaffManager
+from .permissions import NOT_ENOUGH_RIGHTS_MESSAGE, IsStaffManager
 from .serializers import PHONE_REGION
 
 PAGE_SIZE = 50
@@ -93,16 +95,22 @@ class ClientListView(APIView):
                 match |= Q(client_phone__contains=digits)
             phones = Appointment.objects.filter(company=company).filter(match).values('client_phone')
             rows = rows.filter(client_phone__in=phones)
+        if request.query_params.get('blacklist') == '1':
+            rows = rows.filter(client_phone__in=Penalty.objects.filter(
+                company=company, status__in=penalties.ACTIVE).values('phone'))
         rows = rows.order_by(*SORTS.get(request.query_params.get('sort'), SORTS['last']))
         try:
             page = max(1, int(request.query_params.get('page') or 1))
         except ValueError:
             page = 1
         start = (page - 1) * PAGE_SIZE
+        page_rows = list(rows[start:start + PAGE_SIZE])
+        black = penalties.blacklist(company, [row['client_phone'] for row in page_rows])
         return Response({
             'count': rows.count(),
             'page_size': PAGE_SIZE,
-            'results': [row_data(row) for row in rows[start:start + PAGE_SIZE]],
+            'results': [{**row_data(row), 'blacklist': penalties.blacklist_data(black.get(row['client_phone']))}
+                        for row in page_rows],
         })
 
 
@@ -134,6 +142,9 @@ class ClientCardView(APIView):
             'note': note.text if note else '',
             'note_updated_at': note.updated_at.isoformat() if note else None,
             'appointments': [history_item(a) for a in history],
+            'blacklist': penalties.blacklist_data(penalties.blacklist(company, [phone]).get(phone)),
+            'penalties': [penalties.penalty_row(p) for p in Penalty.objects.filter(company=company, phone=phone)
+                          .select_related('appointment__service', 'appointment__master').order_by('-created_at')],
         })
 
 
@@ -173,3 +184,47 @@ class ClientNoteView(APIView):
             defaults={'text': serializer.validated_data['text'], 'updated_by': request.user},
         )
         return Response({'note': note.text, 'note_updated_at': note.updated_at.isoformat()})
+
+
+# --- Чёрный список: действия со штрафом ---
+
+class PenaltyActionSerializer(serializers.Serializer):
+    method = serializers.ChoiceField(choices=METHOD_CHOICES, required=False, default='cash')
+    note = serializers.CharField(max_length=300, required=False, allow_blank=True, default='')
+
+
+class PenaltyActionView(APIView):
+    """POST pay {method} — штраф оплачен на месте (владелец, админ); DELETE pay — отменить оплату
+    (только владелец); POST forgive {note} — простить (владелец, админ)."""
+    permission_classes = [IsStaffManager]
+
+    def penalty(self, request, pk):
+        penalty = Penalty.objects.select_related('appointment').filter(company=request.staff.company, pk=pk).first()
+        if penalty is None:
+            raise StaffError('Штраф не найден', status.HTTP_404_NOT_FOUND)
+        return penalty
+
+    def post(self, request, pk, action):
+        penalty = self.penalty(request, pk)
+        serializer = PenaltyActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        if penalty.status != 'unpaid':
+            raise StaffError('Штраф уже оплачен или прощён')
+        if action == 'pay':
+            penalties.pay([penalty], method=serializer.validated_data['method'], user=request.user)
+        else:
+            penalties.forgive(penalty, user=request.user, note=serializer.validated_data['note'])
+        penalty.refresh_from_db()
+        return Response(penalties.penalty_row(penalty))
+
+    def delete(self, request, pk, action):
+        if action != 'pay':
+            raise StaffError('Неизвестное действие', status.HTTP_404_NOT_FOUND)
+        if request.staff.role != 'owner':
+            raise StaffError(NOT_ENOUGH_RIGHTS_MESSAGE, status.HTTP_403_FORBIDDEN)
+        penalty = self.penalty(request, pk)
+        if penalty.status != 'paid':
+            raise StaffError('Штраф не оплачен')
+        penalties.cancel_payment(penalty)
+        penalty.refresh_from_db()
+        return Response(penalties.penalty_row(penalty))

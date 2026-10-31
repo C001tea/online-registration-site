@@ -13,6 +13,7 @@ urlpatterns = [
     path('companies/<slug:slug>/master/<int:master_id>/reviews/', views.ReviewView.as_view()),
     path('companies/<slug:slug>/master/<int:master_id>/services/', views.MasterServices.as_view()),
     path('appointments/my/', auth_views.MyAppointmentView.as_view()),
+    path('companies/<slug:slug>/my-debt/', auth_views.MyDebtView.as_view()),
     path('appointments/<int:appointment_id>/cancel/', auth_views.CancelAppointmentsView.as_view()),
     path('auth/register/', auth_views.RegisterView.as_view(), name='register'),
     path('auth/login/', auth_views.LoginView.as_view(), name='login'),

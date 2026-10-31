@@ -51,11 +51,45 @@ def client_message(title, appointment):
     return f'{tr(title, lang)}\n{details(appointment, lang)}'
 
 
-def staff_new(appointment):
+def money(value):
+    return f'{value:.2f}'.rstrip('0').rstrip('.') + ' L'
+
+
+def staff_new(appointment, debt=None):
     note = f'\nКомментарий: {escape(appointment.notes)}' if appointment.notes else ''
     lang = '\nЯзык клиента: румынский' if lang_of(appointment) == 'ro' else ''
+    black = f'\n⚠️ <b>Чёрный список</b>: долг {money(debt)} — получить при визите' if debt else ''
     return (f'🆕 <b>Новая запись</b>\n{details(appointment)}\n'
-            f'Клиент: {escape(appointment.client_name)}, {escape(appointment.client_phone)}{note}{lang}')
+            f'Клиент: {escape(appointment.client_name)}, {escape(appointment.client_phone)}{note}{lang}{black}')
+
+
+def debt_note(appointment, debt):
+    return '\n\n' + tr('⚠️ При визите нужно оплатить штраф за пропущенную ранее запись: {amount}.',
+                        lang_of(appointment), amount=money(debt))
+
+
+def late_cancel_warning(appointment, fee):
+    return '\n\n' + tr('⚠️ До визита меньше {hours} ч: при отмене будет начислен штраф {amount} '
+                        '(оплата в салоне при следующем визите).', lang_of(appointment),
+                        hours=appointment.company.late_cancel_hours, amount=money(fee))
+
+
+def penalty_client(penalty):
+    a = penalty.appointment
+    lang = lang_of(a)
+    title = ('❗ <b>Вы не пришли на запись</b>' if penalty.kind == 'no_show'
+             else '❗ <b>Запись отменена позже чем за {hours} ч до визита</b>')
+    return (f'{tr(title, lang, hours=a.company.late_cancel_hours)}\n{details(a, lang)}\n\n'
+            + tr('Начислен штраф {amount} ({percent}% стоимости услуги). Его нужно будет оплатить '
+                 'в салоне при следующем визите.', lang, amount=money(penalty.amount),
+                 percent=a.company.penalty_percent))
+
+
+def penalty_staff(penalty):
+    a = penalty.appointment
+    return (f'⚠️ <b>Поздняя отмена — клиент в чёрном списке</b>\n{details(a)}\n'
+            f'Клиент: {escape(a.client_name)}, {escape(a.client_phone)}\n'
+            f'Штраф {money(penalty.amount)} — получить при следующем визите')
 
 
 def staff_cancelled(appointment):

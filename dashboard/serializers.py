@@ -11,6 +11,7 @@ from rest_framework import serializers, status
 from bookings.models import Appointment, ClientProfile, Company, Master, Service, ServiceCategory
 from bookings.phone import normalize_phone
 from bookings.slots import BUSY_STATUSES
+from finance import penalties
 from .errors import StaffError
 
 # Регион для номеров без «+»: в панели можно вводить 069123456 или 69123456
@@ -78,7 +79,10 @@ def staff_me(user, staff):
         'username': user.username,
         'name': user.get_full_name() or (master.name if master else '') or user.username,
         'role': staff.role,
-        'company': {'id': staff.company.id, 'slug': staff.company.slug, 'name': staff.company.name},
+        'company': {'id': staff.company.id, 'slug': staff.company.slug, 'name': staff.company.name,
+                    # Чёрный список: панель спрашивает про штраф при «Не пришёл» и поздней отмене
+                    'penalty_percent': staff.company.penalty_percent,
+                    'late_cancel_hours': staff.company.late_cancel_hours},
         'master_id': master.id if master else None,
     }
 
@@ -106,12 +110,15 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
     service = serializers.SerializerMethodField()
     source = serializers.SerializerMethodField()
     payment = serializers.SerializerMethodField()
+    blacklist = serializers.SerializerMethodField()
+    penalty = serializers.SerializerMethodField()
 
     class Meta:
         model = Appointment
         fields = [
             'id', 'date', 'start_time', 'end_time', 'duration', 'status', 'master', 'service',
             'client_name', 'client_phone', 'client_email', 'notes', 'source', 'created_at', 'payment',
+            'blacklist', 'penalty',
         ]
         read_only_fields = fields
 
@@ -139,6 +146,21 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
         if payment is None:
             return None
         return {'amount': str(payment.amount), 'discount': str(payment.discount), 'method': payment.method}
+
+    def get_blacklist(self, obj):
+        """Клиент в чёрном списке салона: {debt, count} или None. Список журнала передаёт
+        всё сразу в context['blacklist'], одиночный ответ считает сам."""
+        known = self.context.get('blacklist')
+        if known is None:
+            known = penalties.blacklist(obj.company, [obj.client_phone])
+        return penalties.blacklist_data(known.get(obj.client_phone))
+
+    def get_penalty(self, obj):
+        """Штраф, начисленный по этой записи (не пришёл / поздняя отмена)."""
+        penalty = getattr(obj, 'penalty', None)  # нет штрафа — None (hasattr/getattr ловят DoesNotExist)
+        if penalty is None:
+            return None
+        return {'id': penalty.id, 'kind': penalty.kind, 'status': penalty.status, 'amount': str(penalty.amount)}
 
 
 def paid(appointment):
@@ -549,9 +571,10 @@ class StaffCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
-                  'logo', 'main_photo']
+                  'penalty_percent', 'late_cancel_hours', 'logo', 'main_photo']
         read_only_fields = ['id', 'slug']
-        extra_kwargs = {'cancel_hours': {'max_value': 168}}
+        extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},
+                        'late_cancel_hours': {'max_value': 48}}
 
     def get_logo(self, obj):
         return obj.logo.url if obj.logo else None
