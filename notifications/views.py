@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 
 from bookings.auth_views import get_token_for_user
 from bookings.i18n import client_lang
-from bookings.login_limit import increment_counter
+from bookings.security import client_ip, hit
 from dashboard.permissions import IsStaff
 from . import login, services, telegram
 from .models import StaffTelegram
@@ -69,8 +69,7 @@ class TelegramLoginStartView(APIView):
         username = telegram.bot_username() if telegram.enabled() else None
         if not username:
             return Response({'error': 'Вход через Telegram сейчас недоступен'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR', '')).split(',')[0].strip()
-        if increment_counter(f'tglogin:{ip}', 60 * 60) > LOGIN_STARTS_PER_HOUR:
+        if hit(f'tglogin:{client_ip(request)}', LOGIN_STARTS_PER_HOUR, 60 * 60):
             return Response({'error': 'Слишком много попыток. Попробуйте через час'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         attempt = login.start(client_lang(request))
         return Response({'token': attempt.token, 'url': f'https://t.me/{username}?start=l_{attempt.token}',

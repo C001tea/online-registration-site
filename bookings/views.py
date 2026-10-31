@@ -1,10 +1,11 @@
 from rest_framework import generics, status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import Throttled, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction, connection, DatabaseError
 from django.shortcuts import get_object_or_404
 from .i18n import client_lang
+from .security import TOO_MANY_MESSAGE, client_ip, hit
 from .models import Company, Master, Service, Review, Appointment
 from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
 from .slots import get_free_slots, ACTIVE_STATUSES
@@ -12,6 +13,15 @@ from datetime import datetime, timedelta
 from django.db.models import Avg, Q
 from django.utils import timezone
 from notifications import services as notifications
+
+# Защита онлайн-записи от спама (за час): с одного IP, на один номер, на весь салон;
+# и не больше MAX_UPCOMING_PER_PHONE предстоящих онлайн-записей на номер
+BOOKINGS_PER_IP_HOUR = 30
+BOOKINGS_PER_PHONE_HOUR = 10
+BOOKINGS_PER_SALON_HOUR = 300
+MAX_UPCOMING_PER_PHONE = 3
+SPAM_MESSAGE = 'Не удалось отправить запись. Обновите страницу и попробуйте ещё раз'
+TOO_MANY_UPCOMING_MESSAGE = 'У вас уже есть 3 предстоящие записи в этом салоне. Чтобы записаться ещё, позвоните в салон'
 
 
 class HealthView(APIView):
@@ -24,6 +34,9 @@ class HealthView(APIView):
                 cursor.execute('SELECT 1')
         except DatabaseError:
             return Response({'status': 'error', 'database': 'unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if request.query_params.get('ip') == '1':
+            # Диагностика лимитов: каким IP сервер видит этого посетителя (его собственный адрес)
+            return Response({'status': 'ok', 'ip': client_ip(request)})
         return Response({'status': 'ok'})
 
 
@@ -98,6 +111,16 @@ class AppointmentCreateView(generics.CreateAPIView):
     def perform_create(self, serializer):
         data = serializer.validated_data
         service = data['service']
+        phone = data['client_phone']
+        # Один номер не может занять много времени салона: N предстоящих онлайн-записей и попыток в час
+        if hit(f'book:phone:{phone}', BOOKINGS_PER_PHONE_HOUR, 3600):
+            raise Throttled(detail={'error': TOO_MANY_MESSAGE})
+        upcoming = Appointment.objects.filter(
+            company=self.get_company(), client_phone=phone, status__in=ACTIVE_STATUSES,
+            date__gte=timezone.localdate(), created_by_staff=False,
+        ).count()
+        if upcoming >= MAX_UPCOMING_PER_PHONE:
+            raise ValidationError({'non_field_errors': [TOO_MANY_UPCOMING_MESSAGE]})
 
         # Блокируем мастера, чтобы два одновременных запроса не заняли одно время
         with transaction.atomic():
@@ -120,6 +143,13 @@ class AppointmentCreateView(generics.CreateAPIView):
         self.appointment = appointment
 
     def create(self, request, *args, **kwargs):
+        # Защита от спама: поле-ловушка (человек его не видит и не заполняет) и лимиты
+        if request.data.get('website'):
+            return Response({'error': SPAM_MESSAGE}, status=status.HTTP_400_BAD_REQUEST)
+        company = self.get_company()
+        if (hit(f'book:ip:{client_ip(request)}', BOOKINGS_PER_IP_HOUR, 3600)
+                or hit(f'book:company:{company.id}', BOOKINGS_PER_SALON_HOUR, 3600)):
+            return Response({'error': TOO_MANY_MESSAGE}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         response = super().create(request, *args, **kwargs)
         # Кнопка «Подтвердить в Telegram» на экране после записи
         response.data['telegram_url'] = notifications.client_url(self.appointment)

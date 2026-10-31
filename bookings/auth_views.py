@@ -1,13 +1,22 @@
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import InvalidToken
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
+from dashboard.tokens import STAFF_SCOPE
 from finance import penalties
 from notifications import services as notifications
 from .models import ClientProfile, Appointment, Company
 from .phone import normalize_phone
+from .security import TOO_MANY_MESSAGE, client_ip, hit
+
+REGISTRATIONS_PER_IP_HOUR = 10
 from .i18n import client_lang
 from .rules import cancel_rule_text, client_can_cancel
 from .slots import ACTIVE_STATUSES
@@ -45,6 +54,16 @@ class RegisterView(APIView):
                 {'error': 'Неверный формат номера телефона'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        # Не больше REGISTRATIONS_PER_IP_HOUR новых аккаунтов в час с одного IP
+        if hit(f'register:ip:{client_ip(request)}', REGISTRATIONS_PER_IP_HOUR, 3600):
+            return Response({'error': TOO_MANY_MESSAGE}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        # Пароль — по тем же правилам, что у персонала: не короткий, не только цифры, не популярный
+        try:
+            validate_password(password, User(username=phone))
+        except DjangoValidationError as exc:
+            return Response({'error': ' '.join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
         # Логин клиента — телефон: занятым считается и пользователь с таким логином без профиля
         if ClientProfile.objects.filter(phone=phone).exists() or User.objects.filter(username=phone).exists():
@@ -204,3 +223,18 @@ class MyDebtView(APIView):
         return Response({'debt': str(debt.quantize(Decimal('0.01'))), 'items': [
             {'date': p.appointment.date.isoformat(), 'kind': p.kind, 'amount': str(p.amount),
              'service': p.appointment.service.name if p.appointment.service else None} for p in items]})
+
+
+class ClientTokenRefreshSerializer(TokenRefreshSerializer):
+    """Обновление токена клиента сайта. Токены персонала здесь не принимаются: у них своя
+    точка обновления с проверкой пароля (dashboard: /api/staff/auth/refresh/)."""
+
+    def validate(self, attrs):
+        refresh = self.token_class(attrs['refresh'])
+        if refresh.get('scope') == STAFF_SCOPE:
+            raise InvalidToken('Токен персонала обновляется в панели салона')
+        return super().validate(attrs)
+
+
+class ClientTokenRefreshView(TokenRefreshView):
+    serializer_class = ClientTokenRefreshSerializer

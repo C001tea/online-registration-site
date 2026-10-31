@@ -7,7 +7,7 @@ START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # 1. Пока работает старый контейнер: новый образ (статика собирается в нём) и миграции
 docker compose build web telegram
-docker compose run --rm --no-deps web python manage.py migrate --noinput
+docker compose run --rm --no-deps web sh -c "python manage.py migrate --noinput && python manage.py createcachetable"
 
 # 2. Caddy с актуальным конфигом (Caddyfile подключён файлом — нужен reload).
 #    Reload плавный: начатые запросы дорабатывают со старым конфигом.
