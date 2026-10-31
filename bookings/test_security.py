@@ -58,6 +58,11 @@ class SecurityTests(BookingTestCase):
         self.assertEqual(api.post(url, {}, format='json', HTTP_X_REAL_IP='10.9.9.9').status_code, 429)
         self.assertNotEqual(api.post(url, {}, format='json', HTTP_X_REAL_IP='10.9.9.8').status_code, 429)
 
+    # Страница входа админки подключает статику: в CI collectstatic не запускается
+    @override_settings(STORAGES={
+        'default': {'BACKEND': 'django.core.files.storage.InMemoryStorage'},
+        'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+    })
     def test_admin_login_rate_limited(self):
         for _ in range(5):
             self.client.post('/admin/login/', {'username': 'root', 'password': 'x'})
