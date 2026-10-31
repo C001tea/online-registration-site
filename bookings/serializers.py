@@ -33,7 +33,7 @@ class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'main_photo', 'latitude', 'longitude', 'description',
-                  'cancel_hours', 'penalty_percent', 'late_cancel_hours']
+                  'cancel_hours', 'penalty_percent', 'late_cancel_hours', 'auto_confirm']
 
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     # master не обязателен: без него назначается первый свободный мастер услуги

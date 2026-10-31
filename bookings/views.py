@@ -134,7 +134,7 @@ class AppointmentCreateView(generics.CreateAPIView):
             appointment = serializer.save(
                 company=self.get_company(),
                 master=master,
-                status='pending',
+                status='confirmed' if self.get_company().auto_confirm else 'pending',
                 end_time=end_dt.time(),
                 client=client,
                 lang=client_lang(self.request),
@@ -153,6 +153,8 @@ class AppointmentCreateView(generics.CreateAPIView):
         response = super().create(request, *args, **kwargs)
         # Кнопка «Подтвердить в Telegram» на экране после записи
         response.data['telegram_url'] = notifications.client_url(self.appointment)
+        # Экран после записи: «салон подтвердит» или «запись подтверждена»
+        response.data['status'] = self.appointment.status
         return response
 
 

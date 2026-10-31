@@ -3,6 +3,7 @@ import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db.models import Count, F, Max, Min, OuterRef, Q, Subquery, Sum
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.response import Response
@@ -13,7 +14,8 @@ from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES
 from .errors import StaffError
 from finance import penalties
-from finance.models import METHOD_CHOICES, Penalty
+from finance.models import METHOD_CHOICES, CashOperation, Penalty
+from notifications.models import AppointmentTelegram
 from .models import ClientNote
 from .permissions import NOT_ENOUGH_RIGHTS_MESSAGE, IsStaffManager
 from .serializers import PHONE_REGION
@@ -28,6 +30,7 @@ SORTS = {
     'name': ('name', 'client_phone'),
 }
 NOT_FOUND_MESSAGE = 'Клиент не найден'
+FORGOTTEN_NAME = 'Клиент (данные удалены)'
 
 
 def money(value):
@@ -228,3 +231,27 @@ class PenaltyActionView(APIView):
         penalties.cancel_payment(penalty)
         penalty.refresh_from_db()
         return Response(penalties.penalty_row(penalty))
+
+
+class ClientForgetView(APIView):
+    """POST {phone} — удалить данные клиента в этом салоне по его обращению (закон о защите
+    персональных данных): записи обезличиваются (остаются для статистики и кассы без имени и
+    телефона), заметка, штрафы и связь с Telegram удаляются. Владелец и админ."""
+    permission_classes = [IsStaffManager]
+
+    def post(self, request):
+        company = request.staff.company
+        phone = phone_param(request.data.get('phone'))
+        appointments = Appointment.objects.filter(company=company, client_phone=phone)
+        if not appointments.exists():
+            raise StaffError(NOT_FOUND_MESSAGE, status.HTTP_404_NOT_FOUND)
+        with transaction.atomic():
+            ids = list(appointments.values_list('id', flat=True))
+            AppointmentTelegram.objects.filter(appointment_id__in=ids).delete()
+            # Приходы за штрафы остаются в кассе, но без имени клиента в комментарии
+            CashOperation.objects.filter(penalty__appointment_id__in=ids).update(comment='Штраф (данные клиента удалены)')
+            Penalty.objects.filter(company=company, phone=phone).delete()
+            ClientNote.objects.filter(company=company, phone=phone).delete()
+            count = Appointment.objects.filter(id__in=ids).update(
+                client_name=FORGOTTEN_NAME, client_phone='', client_email='', notes='', client=None)
+        return Response({'anonymized': count})

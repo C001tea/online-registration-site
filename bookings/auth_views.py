@@ -136,6 +136,16 @@ class MeView(APIView):
             return Response({'error': 'Профиль клиента не найден'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'phone': profile.phone, 'name': profile.name, 'surname': profile.surname})
 
+    def delete(self, request):
+        """Клиент удаляет свой аккаунт (право на удаление данных): аккаунт, профиль и связь с
+        Telegram удаляются, записи остаются в салонах без привязки к аккаунту — их данные
+        салон удаляет по обращению (панель: карточка клиента → «Удалить данные клиента»)."""
+        user = request.user
+        if not ClientProfile.objects.filter(user=user).exists() or user.is_staff or user.is_superuser:
+            return Response({'error': 'Профиль клиента не найден'}, status=status.HTTP_404_NOT_FOUND)
+        user.delete()  # ClientProfile, ClientTelegram — каскадом; у записей client станет пустым
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class MyAppointmentView(APIView):
     permission_classes = [IsAuthenticated]
