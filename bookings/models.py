@@ -101,12 +101,35 @@ class MasterSchedule(models.Model):
     start_time = models.TimeField()
     end_time = models.TimeField()
     is_working = models.BooleanField(default=True)
+    # Обед: в это время клиентам не предлагаются слоты (оба поля или ни одного)
+    break_start = models.TimeField(null=True, blank=True)
+    break_end = models.TimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ['master', 'day_of_week']
 
     def __str__(self):
         return f"{self.master.name} - {self.get_day_of_week_display()}"
+
+
+class MasterWorkDay(models.Model):
+    """Рабочий день мастера в конкретную дату: свои часы и обед вместо недельного графика.
+
+    Порядок: выходной по дате (MasterDayOff) → рабочий день по дате → недельный график.
+    """
+    master = models.ForeignKey(Master, on_delete=models.CASCADE, related_name='work_days')
+    date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    break_start = models.TimeField(null=True, blank=True)
+    break_end = models.TimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ['master', 'date']
+        ordering = ['date']
+
+    def __str__(self):
+        return f"{self.master.name} - {self.date} {self.start_time:%H:%M}–{self.end_time:%H:%M}"
 
 
 class MasterDayOff(models.Model):

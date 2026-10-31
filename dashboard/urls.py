@@ -24,6 +24,7 @@ urlpatterns = [
     path('clients/card/', clients.ClientCardView.as_view(), name='staff-client-card'),
     path('clients/note/', clients.ClientNoteView.as_view(), name='staff-client-note'),
     path('days-off/', views.DaysOffListView.as_view(), name='staff-days-off'),
+    path('work-days/', views.WorkDaysListView.as_view(), name='staff-work-days'),
     path('company/', views.CompanyView.as_view(), name='staff-company'),
     re_path(r'^company/(?P<kind>logo|main-photo)/$', views.CompanyPhotoView.as_view(), name='staff-company-photo'),
     path('telegram/', StaffTelegramView.as_view(), name='staff-telegram'),

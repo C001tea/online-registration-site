@@ -37,6 +37,10 @@ def minutes_between(start, end):
     return max(int(delta.total_seconds() // 60), 0)
 
 
+def hhmm(value):
+    return value.strftime('%H:%M') if value else None
+
+
 def schedule_days(master):
     """График мастера ровно из 7 дней (0 — понедельник); отсутствующие дни — выходные 09:00–18:00."""
     by_day = {row.day_of_week: row for row in master.schedule.all()}
@@ -48,8 +52,23 @@ def schedule_days(master):
             'is_working': bool(row and row.is_working),
             'start_time': (row.start_time if row else DEFAULT_DAY_START).strftime('%H:%M'),
             'end_time': (row.end_time if row else DEFAULT_DAY_END).strftime('%H:%M'),
+            'break_start': hhmm(row.break_start) if row else None,
+            'break_end': hhmm(row.break_end) if row else None,
         })
     return days
+
+
+def validate_break(attrs, start, end):
+    """Обед: оба времени или ни одного, внутри рабочего дня, начало раньше конца."""
+    break_start, break_end = attrs.get('break_start'), attrs.get('break_end')
+    if (break_start is None) != (break_end is None):
+        raise serializers.ValidationError('укажите и начало, и конец обеда (или ни то, ни другое)')
+    if break_start is not None:
+        if break_start >= break_end:
+            raise serializers.ValidationError('начало обеда должно быть раньше конца')
+        if break_start <= start or break_end >= end:
+            raise serializers.ValidationError('обед должен быть внутри рабочего дня')
+    attrs['break_start'], attrs['break_end'] = break_start, break_end
 
 
 def staff_me(user, staff):
@@ -406,6 +425,8 @@ class ScheduleDaySerializer(serializers.Serializer):
     is_working = serializers.BooleanField()
     start_time = hhmm_field(required=False)
     end_time = hhmm_field(required=False)
+    break_start = hhmm_field(required=False, allow_null=True)
+    break_end = hhmm_field(required=False, allow_null=True)
 
     def validate(self, attrs):
         start, end = attrs.get('start_time'), attrs.get('end_time')
@@ -418,7 +439,67 @@ class ScheduleDaySerializer(serializers.Serializer):
         attrs['end_time'] = end or DEFAULT_DAY_END
         if attrs['start_time'] >= attrs['end_time']:
             raise serializers.ValidationError('время начала должно быть раньше окончания')
+        if attrs['is_working']:
+            validate_break(attrs, attrs['start_time'], attrs['end_time'])
+        else:
+            attrs['break_start'] = attrs['break_end'] = None  # у нерабочего дня обеда нет
         return attrs
+
+
+# Календарь мастера: на сколько дней вперёд можно расставлять график и сколько дней за раз
+MAX_SCHEDULE_DAYS_AHEAD = 366
+MAX_CALENDAR_RANGE = 62
+DAY_MODES = ('custom', 'off', 'template')
+
+
+class WorkDaysInputSerializer(serializers.Serializer):
+    """Применить к выбранным датам: custom — свои часы и обед, off — выходной, template — как в неделе."""
+    dates = serializers.ListField(child=serializers.DateField(), min_length=1, max_length=MAX_CALENDAR_RANGE)
+    mode = serializers.ChoiceField(choices=DAY_MODES)
+    start_time = hhmm_field(required=False)
+    end_time = hhmm_field(required=False)
+    break_start = hhmm_field(required=False, allow_null=True)
+    break_end = hhmm_field(required=False, allow_null=True)
+
+    def validate_dates(self, value):
+        today = timezone.localdate()
+        if any(d < today for d in value):
+            raise serializers.ValidationError('прошедшие дни менять нельзя')
+        if any((d - today).days > MAX_SCHEDULE_DAYS_AHEAD for d in value):
+            raise serializers.ValidationError('не дальше чем на год вперёд')
+        return sorted(set(value))
+
+    def validate(self, attrs):
+        if attrs['mode'] != 'custom':
+            return attrs
+        start, end = attrs.get('start_time'), attrs.get('end_time')
+        if start is None or end is None:
+            raise serializers.ValidationError('укажите время начала и окончания')
+        if start >= end:
+            raise serializers.ValidationError('время начала должно быть раньше окончания')
+        validate_break(attrs, start, end)
+        return attrs
+
+
+def day_schedule_data(date, schedule, appointments_count=0):
+    return {
+        'date': date.isoformat(),
+        'source': schedule.source,
+        'is_working': schedule.is_working,
+        'start_time': hhmm(schedule.start),
+        'end_time': hhmm(schedule.end),
+        'break_start': hhmm(schedule.break_start),
+        'break_end': hhmm(schedule.break_end),
+        'appointments': appointments_count,
+    }
+
+
+def work_day_data(row):
+    return {
+        'master': row.master_id, 'date': row.date.isoformat(),
+        'start_time': hhmm(row.start_time), 'end_time': hhmm(row.end_time),
+        'break_start': hhmm(row.break_start), 'break_end': hhmm(row.break_end),
+    }
 
 
 class DayOffInputSerializer(serializers.Serializer):

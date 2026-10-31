@@ -6,7 +6,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Count, Max
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
@@ -25,8 +25,10 @@ from bookings.login_limit import (
     register_login_failure, reset_login_failures,
 )
 from bookings.models import (
-    AdminProfile, Appointment, ClientProfile, Master, MasterDayOff, MasterSchedule, Service, ServiceCategory
+    AdminProfile, Appointment, ClientProfile, Master, MasterDayOff, MasterSchedule, MasterWorkDay, Service,
+    ServiceCategory,
 )
+from bookings.schedule import day_schedule, days_schedule
 from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES, get_free_slots
 from notifications import services as notifications
@@ -37,8 +39,8 @@ from .serializers import (
     PHONE_REGION, DAY_NAMES,
     StaffLoginSerializer, PasswordChangeSerializer, StaffAppointmentSerializer, StaffAppointmentWriteSerializer,
     StaffCategorySerializer, StaffServiceSerializer, StaffMasterSerializer, ScheduleDaySerializer,
-    DayOffInputSerializer, MasterAccessSerializer, StaffCompanySerializer,
-    staff_me, schedule_days, day_off_data, paid,
+    DayOffInputSerializer, MasterAccessSerializer, StaffCompanySerializer, WorkDaysInputSerializer,
+    MAX_CALENDAR_RANGE, staff_me, schedule_days, day_off_data, day_schedule_data, work_day_data, hhmm, paid,
 )
 from .tokens import STAFF_SCOPE, StaffRefreshToken, get_staff_tokens, token_matches_password
 
@@ -70,7 +72,7 @@ def parse_int(value):
     return int(value) if value.isdecimal() else None
 
 
-def date_range_params(params):
+def date_range_params(params, max_days=None):
     """date_from (обязателен) и date_to (по умолчанию = date_from) из query-параметров."""
     date_from = parse_date(params.get('date_from'))
     if not date_from:
@@ -82,6 +84,8 @@ def date_range_params(params):
             raise StaffError('date_to — дата в формате YYYY-MM-DD')
     if date_to < date_from:
         raise StaffError('date_to не может быть раньше date_from')
+    if max_days and (date_to - date_from).days + 1 > max_days:
+        raise StaffError(f'Период — не больше {max_days} дней')
     return date_from, date_to
 
 
@@ -311,16 +315,17 @@ class FreeTimesView(APIView):
         times = get_free_slots(
             master, date, duration, exclude_id=exclude_id, step=timedelta(minutes=15), include_past=False
         )
-        schedule = MasterSchedule.objects.filter(master=master, day_of_week=date.weekday(), is_working=True).first()
-        day_off = MasterDayOff.objects.filter(master=master, date=date).exists()
+        schedule = day_schedule(master, date)
         return Response({
             'times': [slot.strftime('%H:%M') for slot in times],
-            'working': schedule is not None and not day_off,
-            'day_off': day_off,
+            'working': schedule.is_working,
+            'day_off': schedule.source == 'off',
             'schedule': {
-                'start_time': schedule.start_time.strftime('%H:%M'),
-                'end_time': schedule.end_time.strftime('%H:%M'),
-            } if schedule else None,
+                'start_time': hhmm(schedule.start),
+                'end_time': hhmm(schedule.end),
+                'break_start': hhmm(schedule.break_start),
+                'break_end': hhmm(schedule.break_end),
+            } if schedule.is_working else None,
         })
 
 
@@ -474,8 +479,75 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
                         # Пропущенное время нерабочего дня уже заменено на 09:00–18:00 (ScheduleDaySerializer)
                         'start_time': row['start_time'],
                         'end_time': row['end_time'],
+                        'break_start': row['break_start'],
+                        'break_end': row['break_end'],
                     },
                 )
+
+    @action(detail=True, methods=['get', 'put'])
+    def days(self, request, pk=None):
+        """График по датам (календарь на месяц).
+
+        GET ?date_from&date_to (не больше 62 дней) — рабочий день на каждую дату и число записей;
+        PUT {dates, mode, start_time, end_time, break_start, break_end} — применить к датам:
+        custom — свои часы и обед, off — выходной, template — как в недельном графике.
+        Записи, которые оказались вне нового графика или в обед, возвращаются в conflicts.
+        """
+        master = self.get_object()
+        if request.method == 'PUT':
+            serializer = WorkDaysInputSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+            dates = data['dates']
+            with transaction.atomic():
+                MasterWorkDay.objects.filter(master=master, date__in=dates).delete()
+                MasterDayOff.objects.filter(master=master, date__in=dates).delete()
+                if data['mode'] == 'off':
+                    MasterDayOff.objects.bulk_create([MasterDayOff(master=master, date=d) for d in dates])
+                elif data['mode'] == 'custom':
+                    MasterWorkDay.objects.bulk_create([
+                        MasterWorkDay(master=master, date=d, start_time=data['start_time'], end_time=data['end_time'],
+                                      break_start=data['break_start'], break_end=data['break_end'])
+                        for d in dates
+                    ])
+            schedules = days_schedule(master, dates[0], dates[-1])
+            return Response({
+                'days': self.days_data(master, dates[0], dates[-1], schedules),
+                'conflicts': self.conflicts(master, dates, schedules),
+            })
+
+        date_from, date_to = date_range_params(request.query_params, max_days=MAX_CALENDAR_RANGE)
+        return Response(self.days_data(master, date_from, date_to, days_schedule(master, date_from, date_to)))
+
+    @staticmethod
+    def days_data(master, date_from, date_to, schedules):
+        counts = dict(
+            Appointment.objects.filter(master=master, date__gte=date_from, date__lte=date_to, status__in=ACTIVE_STATUSES)
+            .values_list('date').annotate(n=Count('id'))
+        )
+        return [day_schedule_data(day, schedule, counts.get(day, 0)) for day, schedule in sorted(schedules.items())]
+
+    @staticmethod
+    def conflicts(master, dates, schedules):
+        """Предстоящие записи, которые не помещаются в новый рабочий день или попадают на обед."""
+        result = []
+        appointments = (Appointment.objects.filter(master=master, date__in=dates, status__in=ACTIVE_STATUSES)
+                        .order_by('date', 'start_time'))
+        for a in appointments:
+            schedule = schedules[a.date]
+            if not schedule.is_working:
+                reason = 'выходной'
+            elif a.start_time < schedule.start or a.end_time > schedule.end:
+                reason = 'вне рабочих часов'
+            elif any(a.start_time < end and a.end_time > start for start, end in schedule.breaks):
+                reason = 'в обед'
+            else:
+                continue
+            result.append({
+                'id': a.id, 'date': a.date.isoformat(), 'start_time': hhmm(a.start_time),
+                'end_time': hhmm(a.end_time), 'client_name': a.client_name, 'reason': reason,
+            })
+        return result
 
     @action(detail=True, methods=['post'], url_path='days-off')
     def add_day_off(self, request, pk=None):
@@ -563,6 +635,19 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
             user.save()
 
         return Response({'username': user.username, 'has_access': True})
+
+
+class WorkDaysListView(APIView):
+    """Рабочие дни по датам (свои часы и обед) за период — для журнала. Мастер видит только свои."""
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        staff = request.staff
+        date_from, date_to = date_range_params(request.query_params, max_days=MAX_CALENDAR_RANGE)
+        rows = MasterWorkDay.objects.filter(master__company=staff.company, date__gte=date_from, date__lte=date_to)
+        if staff.role == 'master':
+            rows = rows.filter(master=staff.master)
+        return Response([work_day_data(row) for row in rows.order_by('date', 'master_id')])
 
 
 class DaysOffListView(APIView):
