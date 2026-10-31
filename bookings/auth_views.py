@@ -4,8 +4,9 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from finance import penalties
 from notifications import services as notifications
-from .models import ClientProfile, Appointment
+from .models import ClientProfile, Appointment, Company
 from .phone import normalize_phone
 from .i18n import client_lang
 from .rules import cancel_rule_text, client_can_cancel
@@ -16,6 +17,7 @@ from .login_limit import (
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from datetime import datetime
+from decimal import Decimal
 
 def get_token_for_user(user):
     refresh = RefreshToken.for_user(user)
@@ -138,6 +140,8 @@ class MyAppointmentView(APIView):
                 "status": apt.status,
                 # Можно ли отменить самому (правило салона «не позже чем за N часов»)
                 "can_cancel": client_can_cancel(apt),
+                # Отмена сейчас будет поздней: столько составит штраф (null — без штрафа)
+                "late_cancel_penalty": str(fee) if (fee := penalties.late_cancel_amount(apt)) else None,
             })
         return Response(data)
 
@@ -174,8 +178,29 @@ class CancelAppointmentsView(APIView):
             return Response({'error': cancel_rule_text(appointment.company, client_lang(request))},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        late = penalties.is_late_cancel(appointment)
         appointment.status = 'cancelled'
         appointment.save()
         notifications.appointment_cancelled_by_client(appointment)
+        if late:  # отменил позже срока салона — чёрный список, штраф при следующем визите
+            penalty = penalties.create(appointment, 'late_cancel')
+            if penalty:
+                notifications.penalty_created(penalty)
 
         return Response({'message': 'Запись отменена'})
+
+
+class MyDebtView(APIView):
+    """Неоплаченные штрафы клиента в салоне (чёрный список): оплачиваются при следующем визите."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, slug):
+        company = Company.objects.filter(slug=slug).first()
+        profile = ClientProfile.objects.filter(user=request.user).first()
+        if company is None or profile is None:
+            return Response({'debt': '0.00', 'items': []})
+        items = penalties.unpaid(company, profile.phone).select_related('appointment__service')
+        debt = sum((p.amount for p in items), Decimal('0'))
+        return Response({'debt': str(debt.quantize(Decimal('0.01'))), 'items': [
+            {'date': p.appointment.date.isoformat(), 'kind': p.kind, 'amount': str(p.amount),
+             'service': p.appointment.service.name if p.appointment.service else None} for p in items]})

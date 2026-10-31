@@ -32,6 +32,7 @@ def first_error(serializer):
 class CheckoutSerializer(serializers.Serializer):
     method = serializers.ChoiceField(choices=METHOD_CHOICES, error_messages={'invalid_choice': 'Выберите способ оплаты'})
     discount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=Decimal('0'))
+    pay_penalties = serializers.BooleanField(required=False, default=False)
 
 
 class OperationSerializer(serializers.Serializer):
@@ -81,8 +82,11 @@ class CheckoutView(APIView):
     def post(self, request, pk):
         data = validated(CheckoutSerializer, request.data)
         appointment = self.get_appointment(request, pk)
-        payment = services.checkout(appointment, method=data['method'], discount=data['discount'], user=request.user)
-        return Response(services.payment_row(payment), status=status.HTTP_201_CREATED)
+        payment = services.checkout(appointment, method=data['method'], discount=data['discount'], user=request.user,
+                                    pay_penalties=data['pay_penalties'])
+        row = services.payment_row(payment)
+        row['penalties_paid'] = str(payment.penalties_paid)
+        return Response(row, status=status.HTTP_201_CREATED)
 
     def delete(self, request, pk):
         if request.staff.role != 'owner':
@@ -139,6 +143,8 @@ class OperationDetailView(APIView):
         operation = get_object_or_404(CashOperation, pk=pk, company=request.staff.company)
         if hasattr(operation, 'salary_payout'):
             raise StaffError('Это выплата зарплаты — отмените её в разделе «Зарплаты»')
+        if hasattr(operation, 'penalty'):
+            raise StaffError('Это оплата штрафа — отмените её в карточке клиента')
         operation.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

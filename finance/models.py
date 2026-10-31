@@ -74,3 +74,35 @@ class SalaryPayout(models.Model):
     operation = models.OneToOneField(CashOperation, on_delete=models.CASCADE, related_name='salary_payout')
     created_at = models.DateTimeField(default=timezone.now)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+
+class Penalty(models.Model):
+    """Штраф клиента (чёрный список): не пришёл или отменил запись слишком поздно.
+
+    Клиент — номер телефона в салоне. Оплачивается на месте при следующем визите (доход в кассе),
+    может быть прощён. Срока давности нет: клиент остаётся в чёрном списке, пока у него есть
+    неотменённые (не прощённые) штрафы.
+    """
+    KIND_CHOICES = [('no_show', 'Не пришёл'), ('late_cancel', 'Поздняя отмена')]
+    STATUS_CHOICES = [('unpaid', 'Не оплачен'), ('paid', 'Оплачен'), ('forgiven', 'Прощён')]
+
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='penalties')
+    appointment = models.OneToOneField(Appointment, on_delete=models.CASCADE, related_name='penalty')
+    phone = models.CharField(max_length=20, db_index=True)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='unpaid')
+    created_at = models.DateTimeField(default=timezone.now)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    note = models.CharField(max_length=300, blank=True)
+    # Приход в кассе при оплате
+    operation = models.OneToOneField(CashOperation, on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='penalty')
+
+    class Meta:
+        indexes = [models.Index(fields=['company', 'phone'])]
+
+    def __str__(self):
+        return f'{self.phone} — {self.amount} ({self.status})'

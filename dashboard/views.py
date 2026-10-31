@@ -31,6 +31,7 @@ from bookings.models import (
 from bookings.schedule import day_schedule, days_schedule
 from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES, get_free_slots
+from finance import penalties
 from notifications import services as notifications
 from .errors import StaffError
 from .permissions import IsStaff, IsStaffManager, IsStaffManagerOrReadOnly, get_staff, NOT_ENOUGH_RIGHTS_MESSAGE
@@ -58,6 +59,7 @@ PASSWORD_BLOCKED_MESSAGE = 'Слишком много попыток. Попро
 LOGIN_FAILED_MESSAGE = 'Неверный логин или пароль'
 PAID_LOCKED_FIELDS = ('status', 'date', 'start_time', 'duration', 'master', 'service')
 PAID_LOCKED_MESSAGE = 'Визит оплачен. Чтобы изменить его, владелец сначала отменяет оплату'
+PENALTY_PAID_MESSAGE = 'Штраф по этой записи уже оплачен — сначала отмените оплату штрафа в карточке клиента'
 
 
 def parse_date(value):
@@ -209,7 +211,8 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
     lookup_value_regex = r'\d+'
 
     def get_queryset(self):
-        queryset = Appointment.objects.filter(company=self.staff.company).select_related('master', 'service', 'payment')
+        queryset = Appointment.objects.filter(company=self.staff.company).select_related(
+            'master', 'service', 'payment', 'penalty', 'company')
         if self.staff.role == 'master':
             # Мастер видит и меняет только свои записи
             queryset = queryset.filter(master=self.staff.master)
@@ -234,8 +237,10 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
                 raise StaffError(f'Неизвестный статус: {", ".join(unknown)}')
             queryset = queryset.filter(status__in=statuses)
 
-        queryset = queryset.order_by('date', 'start_time', 'id')
-        return Response(self.get_serializer(queryset, many=True).data)
+        queryset = list(queryset.order_by('date', 'start_time', 'id'))
+        context = {**self.get_serializer_context(),
+                   'blacklist': penalties.blacklist(self.staff.company, [a.client_phone for a in queryset])}
+        return Response(StaffAppointmentSerializer(queryset, many=True, context=context).data)
 
     def create(self, request):
         serializer = StaffAppointmentWriteSerializer(data=request.data, context=self.get_serializer_context())
@@ -248,15 +253,34 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
         # Оплата привязана к визиту (дата, мастер, услуга) — сначала её отменяют
         if paid(appointment) and any(key in request.data for key in PAID_LOCKED_FIELDS):
             raise StaffError(PAID_LOCKED_MESSAGE)
+        new_status = request.data.get('status')
+        if new_status and new_status != appointment.status and penalties.paid_penalty(appointment):
+            raise StaffError(PENALTY_PAID_MESSAGE)
         before = notifications.snapshot(appointment)
         serializer = StaffAppointmentWriteSerializer(
             appointment, data=request.data, partial=True, context=self.get_serializer_context()
         )
         serializer.is_valid(raise_exception=True)
         appointment = serializer.save()
+        if appointment.status != before['status']:
+            self.penalty_on_status_change(appointment, before['status'], request.data.get('penalty'))
         # Отменили или перенесли — клиенту в Telegram, если он подключён
         notifications.appointment_changed_by_staff(before, appointment)
-        return Response(StaffAppointmentSerializer(appointment).data)
+        return Response(StaffAppointmentSerializer(appointment, context=self.get_serializer_context()).data)
+
+    def penalty_on_status_change(self, appointment, old_status, penalty_flag):
+        """Чёрный список: «Не пришёл» — штраф (если не передали penalty: false); отмена — штраф
+        только по явному penalty: true и только если отменили позже срока; исправили статус —
+        неоплаченный штраф снимается."""
+        if old_status in ('no_show', 'cancelled'):
+            penalties.remove_unpaid(appointment)
+        penalty = None
+        if appointment.status == 'no_show' and penalty_flag is not False:
+            penalty = penalties.create(appointment, 'no_show', self.request.user)
+        elif appointment.status == 'cancelled' and penalty_flag is True and penalties.is_late_cancel(appointment):
+            penalty = penalties.create(appointment, 'late_cancel', self.request.user)
+        if penalty:
+            notifications.penalty_created(penalty)
 
     def pending_queryset(self):
         """Новые записи (бейдж «Новые»): ожидают подтверждения, с сегодняшнего дня и дальше."""
@@ -264,8 +288,10 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
 
     @action(detail=False, methods=['get'])
     def pending(self, request):
-        queryset = self.pending_queryset().order_by('date', 'start_time', 'id')[:MAX_PENDING_ITEMS]
-        return Response(self.get_serializer(queryset, many=True).data)
+        queryset = list(self.pending_queryset().order_by('date', 'start_time', 'id')[:MAX_PENDING_ITEMS])
+        context = {**self.get_serializer_context(),
+                   'blacklist': penalties.blacklist(self.staff.company, [a.client_phone for a in queryset])}
+        return Response(StaffAppointmentSerializer(queryset, many=True, context=context).data)
 
     @action(detail=False, methods=['get'], url_path='pending-count')
     def pending_count(self, request):
@@ -365,6 +391,10 @@ class ClientLookupView(APIView):
             'visits': appointments.filter(status='completed').count(),
             'no_shows': appointments.filter(status='no_show').count(),
             'last_visit': last_visit.isoformat() if last_visit else None,
+            # Чёрный список: долг и неоплаченные штрафы — видно сразу при вводе номера
+            'blacklist': penalties.blacklist_data(penalties.blacklist(company, [phone]).get(phone)),
+            'penalties': [penalties.penalty_row(p) for p in penalties.unpaid(company, phone)
+                          .select_related('appointment__service', 'appointment__master').order_by('created_at')],
         })
 
 

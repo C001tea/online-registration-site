@@ -128,6 +128,7 @@ class Command(BaseCommand):
                         appointments += demo.fill_day(rng, company, master, master_services, day, start, end,
                                                       clients, now, admin_user)
             payments, revenue = demo.pay_visits(rng, appointments, admin_user, owner_user)
+            demo.penalize(appointments, admin_user)
             before = CashOperation.objects.filter(company=company).aggregate(m=Max('id'))['m'] or 0
             operations = demo.cash_operations(rng, company, owner_user, monday, today, masters)
             for op in CashOperation.objects.filter(company=company, id__gt=before):
@@ -164,6 +165,8 @@ class Command(BaseCommand):
             # Сначала кассовые операции (зарплатные выплаты уйдут каскадом), потом записи и мастера
             test_ops.delete()
             SalaryPayout.objects.filter(master__in=test_masters).delete()
+            # Оплаченные штрафы тестовых клиентов — приходы в кассе
+            CashOperation.objects.filter(penalty__appointment__in=test_appointments).delete()
             test_appointments.delete()
             if options['all']:
                 CashOperation.objects.filter(company=company).delete()  # выплаты каскадом

@@ -88,6 +88,20 @@ RO = {
     'Да, отменить': 'Da, anulează',
     'Нет': 'Nu',
     'Спасибо, ждём вас!': 'Mulțumim, vă așteptăm!',
+    # --- Чёрный список ---
+    '⚠️ При визите нужно оплатить штраф за пропущенную ранее запись: {amount}.':
+        '⚠️ La vizită va trebui să achitați amenda pentru programarea ratată anterior: {amount}.',
+    '⚠️ До визита меньше {hours} ч: при отмене будет начислен штраф {amount} '
+    '(оплата в салоне при следующем визите).':
+        '⚠️ Până la vizită au rămas mai puțin de {hours} ore: la anulare se va aplica o amendă de {amount} '
+        '(se achită la salon la următoarea vizită).',
+    '❗ <b>Вы не пришли на запись</b>': '❗ <b>Nu v-ați prezentat la programare</b>',
+    '❗ <b>Запись отменена позже чем за {hours} ч до визита</b>':
+        '❗ <b>Programarea a fost anulată cu mai puțin de {hours} ore înainte de vizită</b>',
+    'Начислен штраф {amount} ({percent}% стоимости услуги). Его нужно будет оплатить '
+    'в салоне при следующем визите.':
+        'A fost aplicată o amendă de {amount} ({percent}% din prețul serviciului). Ea se achită '
+        'la salon la următoarea vizită.',
 }
 
 WEEKDAYS = {

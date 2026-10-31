@@ -14,6 +14,10 @@ class Company(models.Model):
     description = models.TextField(blank=True)
     # Клиент может отменить запись сам (сайт, бот) не позже чем за столько часов; 0 — до начала
     cancel_hours = models.PositiveSmallIntegerField(default=0)
+    # Чёрный список: штраф в % от цены услуги за неявку (0 — штрафы выключены) и за отмену
+    # клиентом позже чем за late_cancel_hours ч до визита (0 — за позднюю отмену не штрафуем)
+    penalty_percent = models.PositiveSmallIntegerField(default=50)
+    late_cancel_hours = models.PositiveSmallIntegerField(default=3)
 
     def __str__(self):
         return self.name

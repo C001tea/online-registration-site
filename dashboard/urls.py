@@ -23,6 +23,8 @@ urlpatterns = [
     path('clients/', clients.ClientListView.as_view(), name='staff-clients'),
     path('clients/card/', clients.ClientCardView.as_view(), name='staff-client-card'),
     path('clients/note/', clients.ClientNoteView.as_view(), name='staff-client-note'),
+    re_path(r'^penalties/(?P<pk>\d+)/(?P<action>pay|forgive)/$', clients.PenaltyActionView.as_view(),
+            name='staff-penalty-action'),
     path('days-off/', views.DaysOffListView.as_view(), name='staff-days-off'),
     path('work-days/', views.WorkDaysListView.as_view(), name='staff-work-days'),
     path('company/', views.CompanyView.as_view(), name='staff-company'),

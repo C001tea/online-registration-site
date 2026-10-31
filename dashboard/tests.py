@@ -268,7 +268,8 @@ class MeTests(StaffTestCase):
         self.auth(self.owner)
         data = self.api.get('/api/staff/me/').data
         self.assertEqual(data['role'], 'owner')
-        self.assertEqual(data['company'], {'id': self.company.id, 'slug': 'a', 'name': 'Салон a'})
+        self.assertEqual(data['company'], {'id': self.company.id, 'slug': 'a', 'name': 'Салон a',
+                                           'penalty_percent': 50, 'late_cancel_hours': 3})
         self.assertIsNone(data['master_id'])
         self.assertEqual(data['name'], 'owner')
 
@@ -798,7 +799,7 @@ class ClientLookupTests(StaffTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, {
             'phone': '+37369000001', 'name': 'Ирина', 'visits': 2, 'no_shows': 1,
-            'last_visit': (self.today - timedelta(days=5)).isoformat(),
+            'last_visit': (self.today - timedelta(days=5)).isoformat(), 'blacklist': None, 'penalties': [],
         })
 
     def test_lookup_profile_and_not_found(self):

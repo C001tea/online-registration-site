@@ -19,6 +19,7 @@ from django.utils import timezone
 from bookings.models import (
     AdminProfile, Appointment, Company, Master, MasterDayOff, MasterSchedule, Service, ServiceCategory,
 )
+from finance import penalties
 from finance.models import CashOperation, Payment, SalaryPayout, SalaryScheme
 from finance.services import salary_row
 
@@ -143,6 +144,7 @@ class Command(BaseCommand):
 
         payments, revenue = self.pay_visits(rng, appointments, admin, owner)
         operations = self.cash_operations(rng, company, owner, monday, today, masters)
+        self.penalize(appointments, admin)
 
         by_status = {}
         for a in appointments:
@@ -198,6 +200,12 @@ class Command(BaseCommand):
         created = min(start_aware - timedelta(days=rng.randint(1, 10), hours=rng.randint(0, 8)), now)
         Appointment.objects.filter(pk=appointment.pk).update(created_at=created)
         return appointment
+
+    def penalize(self, appointments, admin):
+        """Не пришедшие — в чёрный список (штраф оплатят при следующем визите)."""
+        for a in appointments:
+            if a.status == 'no_show':
+                penalties.create(a, 'no_show', admin)
 
     def pay_visits(self, rng, appointments, admin, owner):
         """Пришедшие клиенты оплачивают визит (пара визитов остаётся неоплаченной — как в жизни)."""

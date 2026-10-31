@@ -11,6 +11,7 @@ from bookings.models import AdminProfile, Appointment
 from bookings.rules import cancel_rule_text, client_can_cancel
 from bookings.slots import ACTIVE_STATUSES
 from dashboard.permissions import MANAGER_ROLES, get_staff
+from finance import penalties
 from . import login, telegram, texts
 from .models import AppointmentTelegram, ClientTelegram, OutgoingMessage, StaffLinkToken, StaffTelegram
 
@@ -82,8 +83,38 @@ def appointment_created(appointment, user=None):
         if client_chat:
             link.chat_id = client_chat.chat_id
             link.save(update_fields=['chat_id'])
-            enqueue(link.chat_id, texts.client_card(appointment), client_buttons(link))
-    notify_staff(appointment, texts.staff_new(appointment))
+            enqueue(link.chat_id, card_text(appointment), client_buttons(link))
+    notify_staff(appointment, texts.staff_new(appointment, debt_of(appointment)))
+
+
+def debt_of(appointment):
+    """Неоплаченные штрафы клиента в этом салоне (чёрный список) или None."""
+    info = penalties.blacklist(appointment.company, [appointment.client_phone]).get(appointment.client_phone)
+    return info['debt'] if info and info['debt'] > 0 else None
+
+
+def card_text(appointment):
+    """Карточка записи клиенту; если есть долг — напоминание оплатить его при визите."""
+    text = texts.client_card(appointment)
+    debt = debt_of(appointment)
+    if debt and appointment.status in ACTIVE_STATUSES:
+        text += texts.debt_note(appointment, debt)
+    return text
+
+
+def penalty_created(penalty):
+    """Штраф начислен: клиенту — если его Telegram привязан к записи или аккаунту; салону — если
+    штраф начислен автоматически (клиент сам отменил поздно)."""
+    appointment = penalty.appointment
+    link = AppointmentTelegram.objects.filter(appointment=appointment, chat_id__isnull=False).first()
+    chat_id = link.chat_id if link else None
+    if chat_id is None and appointment.client_id:
+        client_chat = ClientTelegram.objects.filter(user_id=appointment.client_id).first()
+        chat_id = client_chat.chat_id if client_chat else None
+    if chat_id:
+        enqueue(chat_id, texts.penalty_client(penalty))
+    if penalty.created_by_id is None:
+        notify_staff(appointment, texts.penalty_staff(penalty))
 
 
 def appointment_cancelled_by_client(appointment):
@@ -176,7 +207,7 @@ def link_appointment(chat_id, token):
         client = link.appointment.client
         if client:
             ClientTelegram.objects.update_or_create(user=client, defaults={'chat_id': chat_id})
-    reply(chat_id, texts.client_card(link.appointment), client_buttons(link))
+    reply(chat_id, card_text(link.appointment), client_buttons(link))
 
 
 def link_staff(chat_id, token):
@@ -232,14 +263,22 @@ def apply_action(action, link_id, chat_id, message_id):
             link.appointment.status = 'confirmed'
             popup = tr('Спасибо, ждём вас!', lang)
         elif action == 'cy':
+            late = penalties.is_late_cancel(link.appointment)
             appointment.status = 'cancelled'
             appointment.save(update_fields=['status'])
             link.appointment.status = 'cancelled'
             appointment_cancelled_by_client(link.appointment)
             popup = tr('Запись отменена', lang)
+            if late:  # позже срока салона — чёрный список
+                penalty = penalties.create(link.appointment, 'late_cancel')
+                if penalty:
+                    transaction.on_commit(lambda: penalty_created(penalty))
     text = texts.client_card(link.appointment)
     buttons = client_buttons(link)
     if action == 'cx' and editable:
+        fee = penalties.late_cancel_amount(link.appointment)
+        if fee:
+            text += texts.late_cancel_warning(link.appointment, fee)
         text += tr(texts.CONFIRM_CANCEL, lang)
         buttons = [[(tr('Да, отменить', lang), f'cy:{link.id}'), (tr('Нет', lang), f'back:{link.id}')]]
     try:

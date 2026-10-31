@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from bookings.models import Appointment
 from dashboard.errors import StaffError
+from . import penalties
 from .models import METHOD_CHOICES, CashOperation, Payment, SalaryPayout, SalaryScheme
 
 ZERO = Decimal('0')
@@ -28,8 +29,11 @@ def total(queryset, field='amount'):
 
 # --- Оплата визита ---
 
-def checkout(appointment, *, method, discount, user):
-    """Оплата визита: сумма = цена услуги − скидка, визит отмечается «Пришёл»."""
+def checkout(appointment, *, method, discount, user, pay_penalties=False):
+    """Оплата визита: сумма = цена услуги − скидка, визит отмечается «Пришёл».
+
+    pay_penalties — клиент из чёрного списка сразу оплачивает свои штрафы (отдельный приход в кассе).
+    """
     if method not in METHODS:
         raise StaffError('Способ оплаты: наличные, карта или перевод')
     if appointment.status == 'cancelled':
@@ -51,6 +55,10 @@ def checkout(appointment, *, method, discount, user):
         if appointment.status != 'completed':
             appointment.status = 'completed'
             appointment.save(update_fields=['status'])
+        payment.penalties_paid = Decimal('0')
+        if pay_penalties:
+            debts = penalties.unpaid(appointment.company, appointment.client_phone).exclude(appointment=appointment)
+            payment.penalties_paid = penalties.pay(debts, method=method, user=user, day=appointment.date)
     return payment
 
 
@@ -124,7 +132,7 @@ def cash_day(company, day):
         'by_method': {method: str(total(payments.filter(method=method))) for method in METHODS},
         'payments': [payment_row(p) for p in payments.select_related('appointment', 'master')
                      .order_by('appointment__start_time', 'id')],
-        'operations': [operation_row(o) for o in ops.select_related('salary_payout').order_by('created_at')],
+        'operations': [operation_row(o) for o in ops.select_related('salary_payout', 'penalty').order_by('created_at')],
     }
 
 
@@ -142,6 +150,7 @@ def operation_row(o):
         'id': o.id, 'date': o.date.isoformat(), 'kind': o.kind, 'amount': str(o.amount), 'method': o.method,
         'category': o.category, 'comment': o.comment,
         'salary_payout': getattr(o, 'salary_payout', None) is not None,
+        'penalty': getattr(o, 'penalty', None) is not None,
     }
 
 
