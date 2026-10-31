@@ -7,6 +7,7 @@ from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from bookings.i18n import MONTHS
 from bookings.models import Appointment, ClientProfile
 from dashboard.tests import StaffTestCase
 from notifications import services as notifications
@@ -204,4 +205,29 @@ class ClientLateCancelTests(StaffTestCase):
         self.assertTrue(any('Вы не пришли' in t and '100 L' in t for t in queued))
         # Следующая онлайн-запись: карточка клиенту напоминает о долге
         nxt = self.appointment(day=self.day, client=self.user)
-        self.assertIn('нужно оплатить штраф', notifications.card_text(nxt))
+        card = notifications.card_text(nxt)
+        self.assertIn('Неоплаченный штраф: 100 L', card)
+        self.assertIn('вы не пришли на «Маникюр» (200 L)', card)
+        self.assertIn('Согласно правилам салона', card)
+        self.assertIn('оплатите его в салоне при этом визите', card)
+        # Салону — блок: почему в чёрном списке и что получить при визите
+        staff = notifications.texts.staff_new(nxt, notifications.blacklist_of(nxt))
+        self.assertIn('КЛИЕНТ В ЧЁРНОМ СПИСКЕ', staff)
+        self.assertIn('не пришёл на «Маникюр» (200 L), не предупредив', staff)
+        self.assertIn('При визите получить: 100 L', staff)
+        self.assertIn('по правилам салона', staff)
+        # Штраф оплачен — салон видит историю, клиент больше не получает напоминание
+        Penalty.objects.update(status='paid')
+        self.assertIn('Долгов нет', notifications.texts.staff_new(nxt, notifications.blacklist_of(nxt)))
+        self.assertNotIn('штраф', notifications.card_text(nxt).lower())
+
+    def test_romanian_client_debt_block(self):
+        past = self.appointment(day=self.today - timedelta(days=1), client=self.user)
+        self.auth(self.admin)
+        self.api.patch(f'/api/staff/appointments/{past.id}/', {'status': 'no_show'}, format='json')
+        nxt = self.appointment(day=self.day, client=self.user, lang='ro')
+        card = notifications.card_text(nxt)
+        self.assertIn('Amendă neachitată: 100 L', card)
+        self.assertIn('nu v-ați prezentat la «Маникюр»', card)
+        self.assertIn(MONTHS['ro'][past.date.month - 1], card)
+        self.assertIn('Conform regulilor salonului', card)

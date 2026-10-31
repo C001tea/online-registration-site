@@ -12,6 +12,7 @@ from bookings.rules import cancel_rule_text, client_can_cancel
 from bookings.slots import ACTIVE_STATUSES
 from dashboard.permissions import MANAGER_ROLES, get_staff
 from finance import penalties
+from finance.models import Penalty
 from . import login, telegram, texts
 from .models import AppointmentTelegram, ClientTelegram, OutgoingMessage, StaffLinkToken, StaffTelegram
 
@@ -84,21 +85,23 @@ def appointment_created(appointment, user=None):
             link.chat_id = client_chat.chat_id
             link.save(update_fields=['chat_id'])
             enqueue(link.chat_id, card_text(appointment), client_buttons(link))
-    notify_staff(appointment, texts.staff_new(appointment, debt_of(appointment)))
+    notify_staff(appointment, texts.staff_new(appointment, blacklist_of(appointment)))
 
 
-def debt_of(appointment):
-    """Неоплаченные штрафы клиента в этом салоне (чёрный список) или None."""
-    info = penalties.blacklist(appointment.company, [appointment.client_phone]).get(appointment.client_phone)
-    return info['debt'] if info and info['debt'] > 0 else None
+def blacklist_of(appointment):
+    """Штрафы клиента в этом салоне (чёрный список: не оплаченные и оплаченные), кроме этой записи."""
+    return list(Penalty.objects.filter(
+        company=appointment.company, phone=appointment.client_phone, status__in=penalties.ACTIVE,
+    ).exclude(appointment=appointment).select_related('company', 'appointment__service', 'appointment__company')
+        .order_by('appointment__date', 'appointment__start_time'))
 
 
 def card_text(appointment):
-    """Карточка записи клиенту; если есть долг — напоминание оплатить его при визите."""
+    """Карточка записи клиенту; если есть долг — блок: за что штраф и что оплатить при визите."""
     text = texts.client_card(appointment)
-    debt = debt_of(appointment)
-    if debt and appointment.status in ACTIVE_STATUSES:
-        text += texts.debt_note(appointment, debt)
+    unpaid = [p for p in blacklist_of(appointment) if p.status == 'unpaid']
+    if unpaid and appointment.status in ACTIVE_STATUSES:
+        text += texts.debt_note(appointment, unpaid)
     return text
 
 
