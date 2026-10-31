@@ -1,7 +1,11 @@
+import os
+import subprocess
+import sys
 from datetime import time, timedelta
 
 from django.contrib.auth.models import User
-from django.test import override_settings
+from django.conf import settings
+from django.test import SimpleTestCase, override_settings
 from rest_framework.test import APIClient
 
 from dashboard.tokens import get_staff_tokens
@@ -71,3 +75,19 @@ class SecurityTests(BookingTestCase):
     def test_health_shows_own_ip(self):
         self.assertEqual(self.client.get('/api/health/', {'ip': '1'}, HTTP_X_REAL_IP='1.2.3.4').data['ip'], '1.2.3.4')
         self.assertNotIn('ip', self.client.get('/api/health/').data)
+
+
+class ProductionDebugTests(SimpleTestCase):
+    """На боевом сервере (задан API_DOMAIN) DEBUG выключен даже при DEBUG=True в .env."""
+
+    def debug_with(self, **env):
+        code = 'import config.settings as s; print(s.DEBUG)'
+        base = {k: v for k, v in os.environ.items() if k not in ('API_DOMAIN', 'DEBUG')}
+        environment = {**base, 'SECRET_KEY': 'test-secret', **env}
+        result = subprocess.run([sys.executable, '-c', code], env=environment, capture_output=True, text=True,
+                                cwd=settings.BASE_DIR, check=True)
+        return result.stdout.strip().splitlines()[-1]
+
+    def test_debug_forced_off_in_production(self):
+        self.assertEqual(self.debug_with(DEBUG='True', API_DOMAIN='api.example.md'), 'False')
+        self.assertEqual(self.debug_with(DEBUG='True'), 'True')  # локально можно

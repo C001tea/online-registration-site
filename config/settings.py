@@ -16,17 +16,19 @@ def env_list(name, default=''):
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 
+# HTTPS-домен API (Caddy, docs/HTTPS.md); задан — значит это боевой сервер
+API_DOMAIN = os.getenv('API_DOMAIN', '').strip()
+
 # os.getenv возвращает строку, а строка 'False' в Python — истина,
-# поэтому DEBUG раньше был включён всегда
-DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
+# поэтому DEBUG раньше был включён всегда.
+# На боевом сервере DEBUG выключен всегда, что бы ни было в .env: отладочные страницы
+# показывают посторонним список адресов API, код и настройки при ошибке
+DEBUG = not API_DOMAIN and os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
 # Через запятую: ALLOWED_HOSTS=api.example.md,172.20.10.2
 ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 if DEBUG:
     ALLOWED_HOSTS.append('*')
-
-# HTTPS-домен API (Caddy, docs/HTTPS.md) — разрешаем его автоматически
-API_DOMAIN = os.getenv('API_DOMAIN', '').strip()
 if API_DOMAIN:
     ALLOWED_HOSTS.append(API_DOMAIN)
 
