@@ -24,7 +24,7 @@ requests==2.34.2
 sentry-sdk==2.73.0
 six==1.17.0
 sqlparse==0.6.0
-types-PyYAML==6.0.12.20260518
+types-PyYAML==6.0.12.20260906
 typing_extensions==4.16.0
 tzdata==2026.6
 urllib3==2.8.0
