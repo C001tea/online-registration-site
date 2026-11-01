@@ -1,0 +1,74 @@
+# Подключить новый салон: Actions → Create salon → Run workflow.
+# Пароль владельца — из секрета NEW_SALON_PASSWORD (Settings → Secrets and variables → Actions):
+# перед подключением задайте там пароль для нового владельца; после первого входа он меняет его
+# в панели («Сменить пароль»). В лог пароль не попадает.
+# Без галочки confirm — только проверка данных. Команда — dashboard/management/commands/create_salon.py.
+name: Create salon
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Название салона (как увидят клиенты)'
+        required: true
+      slug:
+        description: 'Адрес салона: латиница, цифры, дефис (nail-studio → ?salon=nail-studio, nail-studio.timepoint.tech)'
+        required: true
+      owner:
+        description: 'Логин владельца для входа в панель'
+        required: true
+      address:
+        description: 'Адрес салона (можно позже в Настройках)'
+        required: false
+        default: ''
+      phone:
+        description: 'Телефон салона (можно позже в Настройках)'
+        required: false
+        default: ''
+      confirm:
+        description: 'Создать (без галочки — только проверка)'
+        type: boolean
+        default: false
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Пароль владельца задан
+        env:
+          PASSWORD: ${{ secrets.NEW_SALON_PASSWORD }}
+        run: |
+          if [ -z "$PASSWORD" ]; then
+            echo "::error::Добавьте секрет NEW_SALON_PASSWORD (пароль нового владельца) в Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Подключение салона
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          NAME: ${{ inputs.name }}
+          SLUG: ${{ inputs.slug }}
+          OWNER: ${{ inputs.owner }}
+          ADDRESS: ${{ inputs.address }}
+          PHONE: ${{ inputs.phone }}
+          PASSWORD: ${{ secrets.NEW_SALON_PASSWORD }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          # Данные — JSON через stdin: ничего из полей не подставляется в команды
+          python3 -c 'import json, os; print(json.dumps({k.lower(): os.environ[k] for k in ("NAME", "SLUG", "OWNER", "ADDRESS", "PHONE", "PASSWORD")}))' > "$RUNNER_TEMP/salon.json"
+          YES=""
+          [ "$CONFIRM" = true ] && YES="--yes"
+          ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" \
+            "cd online-registration-site && docker compose exec -T web python manage.py create_salon $YES" < "$RUNNER_TEMP/salon.json"
+          rm -f "$RUNNER_TEMP/salon.json"
