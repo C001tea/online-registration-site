@@ -231,3 +231,43 @@ class ClientLateCancelTests(StaffTestCase):
         self.assertIn('nu v-ați prezentat la «Маникюр»', card)
         self.assertIn(MONTHS['ro'][past.date.month - 1], card)
         self.assertIn('Conform regulilor salonului', card)
+
+
+@override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
+class DebtorsTests(StaffTestCase):
+    """Экран «Должники»: кто должен, сколько, когда придёт; только свой салон, только менеджеры."""
+
+    def no_show(self, phone, name, days_ago):
+        appointment = self.appointment(day=self.today - timedelta(days=days_ago), client_phone=phone, client_name=name)
+        self.auth(self.admin)
+        self.api.patch(f'/api/staff/appointments/{appointment.id}/', {'status': 'no_show'}, format='json')
+        return Penalty.objects.get(appointment=appointment)
+
+    def test_debtors_sorted_by_next_visit_then_debt(self):
+        self.no_show('+37369000001', 'Старое Имя', 9)
+        self.appointment(day=self.today - timedelta(days=8), client_phone='+37369000001', client_name='Ана Долг',
+                         start=time(15), end=time(16), status='completed')
+        self.no_show('+37369000001', 'Ана Долг', 5)          # два штрафа — 200 L, записей нет
+        self.no_show('+37369000002', 'Вера Скоро', 4)        # 100 L, придёт через 7 дней
+        self.appointment(day=self.day, client_phone='+37369000002', client_name='Вера Скоро', start=time(12), end=time(13))
+        paid = self.no_show('+37369000003', 'Оплатила', 3)    # оплачен — не должник
+        self.api.post(f'/api/staff/penalties/{paid.id}/pay/', {'method': 'cash'}, format='json')
+        forgiven = self.no_show('+37369000004', 'Прощена', 2)  # прощён — не должник
+        self.api.post(f'/api/staff/penalties/{forgiven.id}/forgive/', {'note': 'болела'}, format='json')
+
+        data = self.api.get('/api/staff/debtors/').data
+        self.assertEqual((data['total_debt'], data['debtors'], data['penalties'], data['paid_this_month']),
+                         ('300.00', 2, 3, '100.00'))
+        self.assertEqual([(r['name'], r['debt']) for r in data['results']], [('Вера Скоро', '100.00'), ('Ана Долг', '200.00')])
+        self.assertEqual(data['results'][0]['next_visit']['date'], self.day.isoformat())
+        self.assertIsNone(data['results'][1]['next_visit'])
+        self.assertEqual(len(data['results'][1]['penalties']), 2)
+
+    def test_only_managers_of_own_salon(self):
+        self.no_show('+37369000001', 'Ана', 3)
+        self.auth(self.master_user)
+        self.assertEqual(self.api.get('/api/staff/debtors/').status_code, 403)
+        self.auth(self.owner_b)
+        self.assertEqual(self.api.get('/api/staff/debtors/').data['debtors'], 0)
+        self.auth(self.owner)
+        self.assertEqual(self.api.get('/api/staff/debtors/').data['debtors'], 1)
