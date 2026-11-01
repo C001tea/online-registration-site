@@ -39,3 +39,14 @@ jobs:
         run: python manage.py makemigrations --check --dry-run
       - name: Тесты
         run: python manage.py test
+
+  # Браузерные тесты сайта и панели с этим бэкендом (тесты — в репозитории фронтенда, e2e/).
+  # Только на PR: деплой (workflow_call) их не ждёт, всё в main и так приходит через PR
+  e2e:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: NichitaOrmanji/nail-salon-frontend/.github/workflows/e2e.yml@main
+    with:
+      frontend_ref: main
+      backend_ref: ${{ github.sha }}
