@@ -1,0 +1,26 @@
+# Известные уязвимости в Python-зависимостях (pip-audit, база PyPI/OSV).
+# Раз в день и на каждый PR, меняющий requirements.txt. Красный — обновите пакет из отчёта
+# (Dependabot обычно уже открыл PR). Деплой этот workflow не блокирует.
+name: Dependency audit
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  pull_request:
+    paths: [requirements.txt]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pip-audit==2.10.1
+      - name: pip-audit
+        run: pip-audit -r requirements.txt --strict --desc
