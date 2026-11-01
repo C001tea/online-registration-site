@@ -66,7 +66,7 @@ class E2ESeedTests(TestCase):
             call_command('e2e_seed', '--password', PASSWORD, stdout=io.StringIO())
         company = Company.objects.get(slug='e2e')
         self.assertEqual(Master.objects.filter(company=company).count(), 2)
-        self.assertEqual(Appointment.objects.filter(company=company).count(), 2)
+        self.assertEqual(Appointment.objects.filter(company=company).count(), 3)
         self.assertEqual(User.objects.filter(username__startswith='e2e_').count(), 3)
 
     @override_settings(API_DOMAIN='api.example.md')

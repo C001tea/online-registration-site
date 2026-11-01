@@ -16,9 +16,10 @@ from bookings.models import AdminProfile, Appointment, Company, Master, MasterSc
 
 SLUG = 'e2e'
 USERNAMES = {'owner': 'e2e_owner', 'admin': 'e2e_admin', 'master': 'e2e_master'}
-# Клиенты вчерашних записей: на них тесты проверяют «Не пришёл» и удаление данных
+# Клиенты вчерашних записей: на них тесты проверяют «Не пришёл», удаление данных и оплату
 DEBTOR = ('Должник Тест', '+37369000101')
 FORGET = ('Клиент Удалить', '+37369000102')
+PAYER = ('Оплата Тест', '+37369000103')
 
 
 class Command(BaseCommand):
@@ -63,7 +64,7 @@ class Command(BaseCommand):
             masters.append(master)
 
         yesterday = timezone.localdate() - timedelta(days=1)
-        for (name, phone), start in ((DEBTOR, time(10)), (FORGET, time(12))):
+        for (name, phone), start in ((DEBTOR, time(10)), (FORGET, time(12)), (PAYER, time(14))):
             Appointment.objects.create(
                 company=company, master=masters[0], service=services[0], client_name=name, client_phone=phone,
                 date=yesterday, start_time=start, end_time=time(start.hour + 1), status='confirmed',
