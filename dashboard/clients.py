@@ -255,3 +255,61 @@ class ClientForgetView(APIView):
             count = Appointment.objects.filter(id__in=ids).update(
                 client_name=FORGOTTEN_NAME, client_phone='', client_email='', notes='', client=None)
         return Response({'anonymized': count})
+
+
+class DebtorsView(APIView):
+    """GET — должники салона: у кого есть неоплаченные штрафы (владелец, админ).
+
+    Сверху — кто придёт скоро (ближайшая запись): у них долг и получают при визите;
+    дальше — по сумме долга. Плюс итоги: общий долг и оплаченные в этом месяце штрафы.
+    """
+    permission_classes = [IsStaffManager]
+
+    def get(self, request):
+        company = request.staff.company
+        unpaid = list(Penalty.objects.filter(company=company, status='unpaid')
+                      .select_related('appointment__service', 'appointment__master', 'appointment__company')
+                      .order_by('-created_at'))
+        by_phone = {}
+        for p in unpaid:
+            by_phone.setdefault(p.phone, []).append(p)
+        phones = list(by_phone)
+
+        # Имя — из последней записи клиента; ближайшая запись — первая предстоящая активная
+        names, upcoming = {}, {}
+        for a in (Appointment.objects.filter(company=company, client_phone__in=phones)
+                  .order_by('-date', '-start_time').values('client_phone', 'client_name')):
+            names.setdefault(a['client_phone'], a['client_name'])
+        now = timezone.localtime()
+        for a in (Appointment.objects.filter(company=company, client_phone__in=phones, status__in=ACTIVE_STATUSES)
+                  .filter(Q(date__gt=now.date()) | Q(date=now.date(), start_time__gte=now.time()))
+                  .select_related('master').order_by('date', 'start_time')):
+            upcoming.setdefault(a.client_phone, {
+                'id': a.id, 'date': a.date.isoformat(), 'time': a.start_time.strftime('%H:%M'),
+                'master': a.master.name if a.master else None,
+            })
+
+        results = []
+        for phone, items in by_phone.items():
+            results.append({
+                'phone': phone,
+                'name': names.get(phone) or '',
+                'debt': money(sum(p.amount for p in items)),
+                'next_visit': upcoming.get(phone),
+                'penalties': [penalties.penalty_row(p) for p in items],
+            })
+        # Сначала с ближайшей записью (по времени визита), потом остальные — по долгу
+        results.sort(key=lambda r: (r['next_visit'] is None,
+                                    (r['next_visit']['date'], r['next_visit']['time']) if r['next_visit'] else ('', ''),
+                                    -Decimal(r['debt'])))
+
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        paid_month = (Penalty.objects.filter(company=company, status='paid', resolved_at__gte=month_start)
+                      .aggregate(total=Sum('amount'))['total'])
+        return Response({
+            'total_debt': money(sum((p.amount for p in unpaid), Decimal('0'))),
+            'debtors': len(results),
+            'penalties': len(unpaid),
+            'paid_this_month': money(paid_month),
+            'results': results,
+        })
