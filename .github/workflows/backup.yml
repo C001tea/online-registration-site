@@ -64,7 +64,7 @@ jobs:
               --symmetric --cipher-algo AES256 -o "$NAME.gpg" "$NAME"
           rm -f "$NAME"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.NAME }}
           path: ${{ env.NAME }}.gpg
