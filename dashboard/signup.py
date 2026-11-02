@@ -91,7 +91,7 @@ class SignupConfigView(APIView):
 
     def get(self, request):
         return Response({'signup': settings.SIGNUP_ENABLED, 'password_reset': settings.EMAIL_CONFIGURED,
-                         'trial_days': settings.TRIAL_DAYS})
+                         'trial_days': settings.TRIAL_DAYS, 'salon_url_template': settings.SALON_URL_TEMPLATE})
 
 
 class SlugCheckView(APIView):

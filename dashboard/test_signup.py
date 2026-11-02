@@ -36,7 +36,7 @@ class SignupTests(TestCase):
         with override_settings(SIGNUP_ENABLED=False):
             self.assertEqual(self.signup().status_code, 403)
             config = self.api.get('/api/staff/signup/config/').data
-        self.assertEqual(config['signup'], False)
+        self.assertEqual((config['signup'], config['salon_url_template']), (False, 'https://{slug}.salon.test'))
         self.assertFalse(Company.objects.exists())
 
     def test_slug_check(self):
