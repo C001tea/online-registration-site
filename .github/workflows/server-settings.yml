@@ -1,7 +1,8 @@
 # Изменить настройку в .env на сервере без захода по SSH.
 # Actions → Server settings → Run workflow → выбрать настройку и значение.
 # Только несекретные настройки: значение видно в логе. Пароли и ключи
-# так не менять. После изменения — деплой без простоя (deploy/deploy.sh).
+# так не менять (пароль почты — секрет EMAIL_HOST_PASSWORD, его ставит деплой).
+# Почта и регистрация салонов — docs/SIGNUP.md. После изменения — деплой без простоя (deploy/deploy.sh).
 name: Server settings
 
 on:
@@ -15,6 +16,14 @@ on:
           - HTTPS_ONLY
           - CORS_ALLOWED_ORIGINS
           - CSRF_TRUSTED_ORIGINS
+          - EMAIL_HOST
+          - EMAIL_PORT
+          - EMAIL_HOST_USER
+          - DEFAULT_FROM_EMAIL
+          - SIGNUP_ENABLED
+          - TRIAL_DAYS
+          - PANEL_URL
+          - SALON_URL_TEMPLATE
       value:
         description: Значение
         required: true
@@ -42,7 +51,7 @@ jobs:
           VALUE: ${{ inputs.value }}
         run: |
           case "$VALUE" in
-            *[!A-Za-z0-9.,:/_-]*|"") echo "::error::Недопустимые символы в значении"; exit 1 ;;
+            *[!A-Za-z0-9.,:/_@{}?=\<\>\ +-]*|"") echo "::error::Недопустимые символы в значении"; exit 1 ;;
           esac
           ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "
             set -e

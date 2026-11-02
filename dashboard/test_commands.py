@@ -45,9 +45,9 @@ class CreateSalonTests(TestCase):
         Company.objects.create(name='Есть', slug='taken')
         User.objects.create_user('busy', password=PASSWORD)
         cases = [
-            ({'slug': 'Bad Slug'}, 'slug'),
+            ({'slug': 'Bad Slug'}, 'латинские буквы'),
             ({'slug': 'api'}, 'служебный'),
-            ({'slug': 'taken'}, 'уже есть'),
+            ({'slug': 'taken'}, 'уже занят'),
             ({'owner': 'busy'}, 'уже занят'),
             ({'owner': 'BUSY'}, 'уже занят'),
             ({'password': '12345678'}, 'Пароль владельца'),

@@ -224,7 +224,7 @@ class MyDebtView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, slug):
-        company = Company.objects.filter(slug=slug).first()
+        company = Company.public.filter(slug=slug).first()
         profile = ClientProfile.objects.filter(user=request.user).first()
         if company is None or profile is None:
             return Response({'debt': '0.00', 'items': []})

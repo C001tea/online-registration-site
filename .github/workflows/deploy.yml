@@ -17,11 +17,12 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          EMAIL_HOST_PASSWORD: ${{ secrets.EMAIL_HOST_PASSWORD }}
         with:
           host: ${{ secrets.NEW_SERVER_HOST }}
           username: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
           key: ${{ secrets.NEW_SERVER_SSH_KEY }}
-          envs: TELEGRAM_BOT_TOKEN,SENTRY_DSN
+          envs: TELEGRAM_BOT_TOKEN,SENTRY_DSN,EMAIL_HOST_PASSWORD
           script: |
             set -e
             cd online-registration-site
@@ -35,6 +36,11 @@ jobs:
             if [ -n "$SENTRY_DSN" ]; then
               sed -i '/^SENTRY_DSN=/d' .env
               printf 'SENTRY_DSN=%s\n' "$SENTRY_DSN" >> .env
+            fi
+            # Пароль SMTP (письма: подтверждение email, сброс пароля) — из секрета EMAIL_HOST_PASSWORD
+            if [ -n "$EMAIL_HOST_PASSWORD" ]; then
+              sed -i '/^EMAIL_HOST_PASSWORD=/d' .env
+              printf 'EMAIL_HOST_PASSWORD=%s\n' "$EMAIL_HOST_PASSWORD" >> .env
             fi
             # Деплой без простоя — подробности в самом скрипте и docs/OPERATIONS.md
             sh deploy/deploy.sh

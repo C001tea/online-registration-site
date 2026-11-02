@@ -121,8 +121,11 @@ class StaffLoginView(APIView):
     def post(self, request):
         serializer = StaffLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        username = serializer.validated_data['username']
+        username = serializer.validated_data['username'].strip()
         password = serializer.validated_data['password']
+        # Владельцы, зарегистрированные сами, входят по email (логин — email в нижнем регистре)
+        if '@' in username:
+            username = username.lower()
 
         # Счётчик — по аккаунту, в который ведёт логин: любое написание телефона даёт один ключ,
         # общий со входом клиента (/api/auth/login/). Проверяется до любой попытки authenticate().

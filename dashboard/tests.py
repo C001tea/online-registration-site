@@ -1,6 +1,7 @@
 from datetime import time, timedelta
 from io import StringIO
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.core.management import call_command
@@ -269,7 +270,9 @@ class MeTests(StaffTestCase):
         data = self.api.get('/api/staff/me/').data
         self.assertEqual(data['role'], 'owner')
         self.assertEqual(data['company'], {'id': self.company.id, 'slug': 'a', 'name': 'Салон a',
-                                           'penalty_percent': 50, 'late_cancel_hours': 3})
+                                           'penalty_percent': 50, 'late_cancel_hours': 3, 'status': 'active',
+                                           'trial_ends_at': None,
+                                           'public_url': settings.SALON_URL_TEMPLATE.format(slug='a')})
         self.assertIsNone(data['master_id'])
         self.assertEqual(data['name'], 'owner')
 

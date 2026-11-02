@@ -14,15 +14,10 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
 
-from bookings.models import AdminProfile, Company
+from dashboard.salons import create_salon, login_taken, slug_error
 
-SLUG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$')
 USERNAME_RE = re.compile(r'^[A-Za-z0-9_.@+-]{3,150}$')
-# Поддомены сервиса и служебные адреса — салону их не дать
-RESERVED_SLUGS = {'www', 'api', 'app', 'admin', 'admin-panel', 'demo', 'e2e', 'mail', 'static', 'media',
-                  'help', 'support', 'status', 'blog', 'timepoint'}
 SITE_URL = 'https://nail-salon-frontend.vercel.app'
 
 
@@ -40,16 +35,11 @@ def clean(data):
     errors = []
     if not 1 <= len(name) <= 200:
         errors.append('Название салона: от 1 до 200 символов')
-    if not SLUG_RE.match(slug):
-        errors.append('Адрес салона (slug): 3–30 символов, латиница в нижнем регистре, цифры и дефис, '
-                      'без дефиса в начале и конце — например jcnails или nail-studio')
-    elif slug in RESERVED_SLUGS:
-        errors.append(f'Адрес «{slug}» служебный — выберите другой')
-    elif Company.objects.filter(slug=slug).exists():
-        errors.append(f'Салон с адресом «{slug}» уже есть')
+    if (problem := slug_error(slug)):
+        errors.append(problem)
     if not USERNAME_RE.match(owner):
         errors.append('Логин владельца: 3–150 символов, латиница, цифры и _ . @ + -')
-    elif User.objects.filter(username__iexact=owner).exists():
+    elif login_taken(owner):
         errors.append(f'Логин «{owner}» уже занят')
     if len(address) > 300:
         errors.append('Адрес: не длиннее 300 символов')
@@ -84,11 +74,8 @@ class Command(BaseCommand):
             self.stdout.write('Проверка пройдена. Пробный запуск — для создания добавьте --yes')
             return
 
-        with transaction.atomic():
-            company = Company.objects.create(name=data['name'], slug=data['slug'],
-                                             address=data['address'], phone=data['phone'])
-            user = User.objects.create_user(data['owner'], password=data['password'], first_name='Владелец')
-            AdminProfile.objects.create(user=user, company=company, role='owner')
+        create_salon(name=data['name'], slug=data['slug'], owner_login=data['owner'], password=data['password'],
+                     address=data['address'], phone=data['phone'])
 
         self.stdout.write(self.style.SUCCESS('Готово.'))
         self.stdout.write(f'Сайт записи: {SITE_URL}/?salon={data["slug"]}  (или https://{data["slug"]}.timepoint.tech '

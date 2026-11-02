@@ -3,7 +3,13 @@ from .models import (
     Company, Master, Service, ServiceCategory, Appointment, MasterSchedule, ClientProfile, AdminProfile, MasterDayOff, MasterWorkDay
 )
 
-admin.site.register(Company)
+@admin.register(Company)
+class CompanyAdmin(admin.ModelAdmin):
+    # Новые салоны (самостоятельная регистрация): статус, пробный период, дата регистрации
+    list_display = ('name', 'slug', 'status', 'trial_ends_at', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('name', 'slug')
+    ordering = ('-created_at',)
 
 @admin.register(Master)
 class MasterAdmin(admin.ModelAdmin):
