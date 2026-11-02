@@ -4,7 +4,7 @@ from rest_framework.routers import SimpleRouter
 from finance.views import CheckoutView
 from notifications.views import StaffTelegramView
 
-from . import clients, views
+from . import clients, signup, views
 
 # SimpleRouter — без корневой страницы API (она была бы доступна без прав)
 router = SimpleRouter()
@@ -15,6 +15,14 @@ router.register('masters', views.MasterViewSet, basename='staff-masters')
 
 urlpatterns = [
     path('auth/login/', views.StaffLoginView.as_view(), name='staff-login'),
+    path('signup/config/', signup.SignupConfigView.as_view(), name='staff-signup-config'),
+    path('signup/slug/', signup.SlugCheckView.as_view(), name='staff-signup-slug'),
+    path('signup/', signup.SignupView.as_view(), name='staff-signup'),
+    path('verify-email/', signup.VerifyEmailView.as_view(), name='staff-verify-email'),
+    path('verify-email/resend/', signup.ResendVerificationView.as_view(), name='staff-verify-email-resend'),
+    path('password-reset/', signup.PasswordResetView.as_view(), name='staff-password-reset'),
+    path('password-reset/confirm/', signup.PasswordResetConfirmView.as_view(), name='staff-password-reset-confirm'),
+    path('onboarding/', signup.OnboardingView.as_view(), name='staff-onboarding'),
     path('auth/refresh/', views.StaffTokenRefreshView.as_view(), name='staff-refresh'),
     path('auth/password/', views.StaffPasswordView.as_view(), name='staff-password'),
     path('me/', views.StaffMeView.as_view(), name='staff-me'),

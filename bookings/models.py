@@ -1,6 +1,15 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.utils import timezone
 import uuid
+
+
+class PublicCompanyManager(models.Manager):
+    """Салоны, которые видят клиенты: подтверждённые (status=active)."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(status=Company.STATUS_ACTIVE)
+
 
 class Company(models.Model):
     name = models.CharField(max_length=200)
@@ -21,6 +30,25 @@ class Company(models.Model):
     # Онлайн-записи сразу «Подтверждена» (для клиентов без Telegram); иначе — «Ожидает»,
     # подтверждает клиент в боте или администратор в панели
     auto_confirm = models.BooleanField(default=False)
+
+    # Самостоятельная регистрация: салон виден клиентам после подтверждения email владельца
+    STATUS_PENDING = 'pending'
+    STATUS_ACTIVE = 'active'
+    STATUS_BLOCKED = 'blocked'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Ждёт подтверждения email'),
+        (STATUS_ACTIVE, 'Работает'),
+        (STATUS_BLOCKED, 'Заблокирован'),
+    ]
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    # Конец бесплатного пробного периода (пусто — салон подключён вручную, без пробного периода)
+    trial_ends_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    # Владелец принял условия сервиса при регистрации
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+
+    objects = models.Manager()
+    public = PublicCompanyManager()
 
     def __str__(self):
         return self.name

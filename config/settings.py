@@ -234,3 +234,32 @@ if SENTRY_DSN:
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '').strip()
 TELEGRAM_BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@')
 TELEGRAM_MAX_ATTEMPTS = 8
+
+# --- Почта (подтверждение email, сброс пароля) ---
+# SMTP любого сервиса (Brevo, Resend, Postmark, Amazon SES…): EMAIL_HOST, EMAIL_PORT,
+# EMAIL_HOST_USER, EMAIL_HOST_PASSWORD (секрет), DEFAULT_FROM_EMAIL. Без EMAIL_HOST письма
+# не отправляются, а регистрация салонов и «Забыли пароль?» выключены.
+EMAIL_HOST = os.getenv('EMAIL_HOST', '').strip()
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_SSL = EMAIL_PORT == 465
+EMAIL_USE_TLS = not EMAIL_USE_SSL
+EMAIL_TIMEOUT = 15
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'TimePoint <no-reply@timepoint.tech>')
+# Тесты и e2e: EMAIL_BACKEND=django.core.mail.backends.filebased.EmailBackend + EMAIL_FILE_PATH
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND') or (
+    'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST else 'django.core.mail.backends.dummy.EmailBackend')
+EMAIL_FILE_PATH = os.getenv('EMAIL_FILE_PATH') or None
+EMAIL_CONFIGURED = bool(EMAIL_HOST or os.getenv('EMAIL_BACKEND'))
+
+# --- Самостоятельная регистрация салонов ---
+# Включается SIGNUP_ENABLED=true и только при настроенной почте (без неё нельзя подтвердить email
+# и восстановить пароль)
+SIGNUP_ENABLED = EMAIL_CONFIGURED and os.getenv('SIGNUP_ENABLED', 'False').lower() in ('true', '1', 'yes')
+TRIAL_DAYS = int(os.getenv('TRIAL_DAYS', '14'))
+# Адрес панели для ссылок в письмах и адрес сайта записи салона ({slug})
+PANEL_URL = os.getenv('PANEL_URL', 'https://nail-salon-frontend.vercel.app').rstrip('/')
+SALON_URL_TEMPLATE = os.getenv('SALON_URL_TEMPLATE', 'https://nail-salon-frontend.vercel.app/?salon={slug}')
+# Ссылка «сбросить пароль» действует 2 часа
+PASSWORD_RESET_TIMEOUT = 2 * 3600

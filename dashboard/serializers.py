@@ -2,6 +2,7 @@ import math
 from datetime import datetime, time
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.conf import settings
 from django.contrib.auth.validators import UnicodeUsernameValidator
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
@@ -77,12 +78,17 @@ def staff_me(user, staff):
     return {
         'id': user.id,
         'username': user.username,
+        'email': user.email,
         'name': user.get_full_name() or (master.name if master else '') or user.username,
         'role': staff.role,
         'company': {'id': staff.company.id, 'slug': staff.company.slug, 'name': staff.company.name,
                     # Чёрный список: панель спрашивает про штраф при «Не пришёл» и поздней отмене
                     'penalty_percent': staff.company.penalty_percent,
-                    'late_cancel_hours': staff.company.late_cancel_hours},
+                    'late_cancel_hours': staff.company.late_cancel_hours,
+                    # Самостоятельная регистрация: pending — сайт записи скрыт до подтверждения email
+                    'status': staff.company.status,
+                    'trial_ends_at': staff.company.trial_ends_at.isoformat() if staff.company.trial_ends_at else None,
+                    'public_url': settings.SALON_URL_TEMPLATE.format(slug=staff.company.slug)},
         'master_id': master.id if master else None,
     }
 

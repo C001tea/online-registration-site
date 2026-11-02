@@ -49,7 +49,7 @@ def parse_date(value):
 
 class MasterListView(APIView):
     def get(self, request, slug):
-        company = get_object_or_404(Company, slug=slug)
+        company = get_object_or_404(Company.public, slug=slug)
         # Клиенту показываем только мастеров, к которым можно записаться:
         # без активных услуг выбор мастера заканчивается пустым экраном
         masters = company.masters.filter(is_active=True, services__is_active=True).distinct()
@@ -63,7 +63,7 @@ class MasterListView(APIView):
 
 class ServiceListView(APIView):
     def get(self, request, slug):
-        company = get_object_or_404(Company, slug=slug)
+        company = get_object_or_404(Company.public, slug=slug)
         services = company.services.filter(is_active=True)
         master_id = request.query_params.get('master_id')
         date = request.query_params.get("date")
@@ -100,7 +100,7 @@ class AppointmentCreateView(generics.CreateAPIView):
 
     def get_company(self):
         if not hasattr(self, '_company'):
-            self._company = get_object_or_404(Company, slug=self.kwargs['slug'])
+            self._company = get_object_or_404(Company.public, slug=self.kwargs['slug'])
         return self._company
 
     def get_serializer_context(self):
@@ -163,7 +163,7 @@ class SelectData(APIView):
     """Свободное время салона без привязки к услуге (окна по 30 минут)."""
 
     def get(self, request, slug):
-        company = get_object_or_404(Company, slug=slug)
+        company = get_object_or_404(Company.public, slug=slug)
         date = parse_date(request.query_params.get('date'))
         if not date:
             return Response({"error": "Date format: YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
@@ -177,7 +177,7 @@ class SelectData(APIView):
 
 class SlotListView(APIView):
     def get(self, request, slug):
-        company = get_object_or_404(Company, slug=slug)
+        company = get_object_or_404(Company.public, slug=slug)
 
         master_id = request.query_params.get('master')
         service_id = request.query_params.get('service')
@@ -209,12 +209,12 @@ class SlotListView(APIView):
 class CompanyInfoView(generics.RetrieveAPIView):
     serializer_class = CompanySerializer
     lookup_field = 'slug'
-    queryset = Company.objects.all()
+    queryset = Company.public.all()
 
 class ReviewView(APIView):
 
     def get(self, request, slug, master_id):
-        company = get_object_or_404(Company, slug=slug)
+        company = get_object_or_404(Company.public, slug=slug)
         master = get_object_or_404(Master, id=master_id, company=company)
 
         reviews = Review.objects.filter(master=master).order_by('-created_at')
@@ -239,7 +239,7 @@ class ReviewView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
-        company = get_object_or_404(Company, slug=slug)
+        company = get_object_or_404(Company.public, slug=slug)
         master = get_object_or_404(Master, id=master_id, company=company)
 
         if master.user_id == request.user.id:
@@ -277,6 +277,6 @@ class MasterServices(generics.ListAPIView):
     serializer_class = ServiceSerializer
 
     def get_queryset(self):
-        company = get_object_or_404(Company, slug=self.kwargs['slug'])
+        company = get_object_or_404(Company.public, slug=self.kwargs['slug'])
         master = get_object_or_404(Master, id=self.kwargs['master_id'], company=company, is_active=True)
         return master.services.filter(is_active=True)
