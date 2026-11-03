@@ -30,7 +30,7 @@ from bookings.security import TOO_MANY_MESSAGE, client_ip, hit
 from notifications.models import StaffTelegram
 from .errors import StaffError
 from .permissions import IsStaff, IsStaffManager, get_staff
-from .salons import create_salon, login_taken, slug_error, slugify_name, suggest_slug
+from .salons import clean_name, create_salon, login_taken, slug_error, slugify_name, suggest_slug
 from .serializers import PHONE_REGION, staff_me
 from .tokens import get_staff_tokens
 
@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 VERIFY_SALT = 'staff-verify-email'
 VERIFY_MAX_AGE = 7 * 24 * 3600
 SIGNUPS_PER_IP_HOUR = 5
+# На весь сервис: IP можно подделать при обращении к API напрямую, этот лимит — нет
+SIGNUPS_TOTAL_HOUR = 30
+RESETS_TOTAL_HOUR = 60
 SLUG_CHECKS_PER_IP_HOUR = 120
 RESETS_PER_IP_HOUR = 10
 RESETS_PER_EMAIL_HOUR = 3
@@ -72,7 +75,7 @@ def send_verification(user, company):
     token = signing.dumps({'u': user.pk, 'e': user.email.lower()}, salt=VERIFY_SALT)
     link = f'{settings.PANEL_URL}/admin-panel/verify-email?token={token}'
     return send(
-        f'Подтвердите email — {company.name}',
+        f'Подтвердите email — {clean_name(company.name)}',
         f'Здравствуйте!\n\n'
         f'Вы зарегистрировали салон «{company.name}» в TimePoint. Подтвердите email — после этого '
         f'клиенты увидят ваш сайт онлайн-записи:\n\n{link}\n\n'
@@ -117,6 +120,12 @@ class SignupSerializer(serializers.Serializer):
     password = serializers.CharField(trim_whitespace=False, max_length=128)
     phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     accept_terms = serializers.BooleanField()
+
+    def validate_salon_name(self, value):
+        value = clean_name(value)
+        if not value:
+            raise serializers.ValidationError('Укажите название салона')
+        return value
 
     def validate_slug(self, value):
         value = value.strip().lower()
@@ -164,12 +173,13 @@ class SignupView(APIView):
         if request.data.get('website'):
             raise StaffError('Не удалось зарегистрироваться. Обновите страницу и попробуйте ещё раз')
         throttled(f'signup:ip:{client_ip(request)}', SIGNUPS_PER_IP_HOUR)
+        throttled('signup:all', SIGNUPS_TOTAL_HOUR)
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         company, user = create_salon(
-            name=data['salon_name'].strip(), slug=data['slug'], owner_login=data['email'], email=data['email'],
-            password=data['password'], phone=data['phone'], pending=True,
+            name=data['salon_name'], slug=data['slug'], owner_login=data['email'], email=data['email'],
+            password=data['password'], phone=data.get('phone', ''), pending=True,
         )
         email_sent = send_verification(user, company)
         return Response({**get_staff_tokens(user), 'me': staff_me(user, get_staff(user)),
@@ -232,6 +242,7 @@ class PasswordResetView(APIView):
         if not email or '@' not in email or len(email) > 150:
             raise StaffError('Укажите email')
         throttled(f'reset:ip:{client_ip(request)}', RESETS_PER_IP_HOUR)
+        throttled('reset:all', RESETS_TOTAL_HOUR)
         # Лимит на адрес молча: не раскрываем, есть ли такой пользователь
         if not hit(f'reset:email:{email}', RESETS_PER_EMAIL_HOUR, 3600):
             for user in User.objects.filter(email__iexact=email, is_active=True):

@@ -14,6 +14,7 @@ from bookings.phone import normalize_phone
 from bookings.slots import BUSY_STATUSES
 from finance import penalties
 from .errors import StaffError
+from .salons import clean_name
 
 # Регион для номеров без «+»: в панели можно вводить 069123456 или 69123456
 PHONE_REGION = 'MD'
@@ -581,6 +582,12 @@ class StaffCompanySerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},
                         'late_cancel_hours': {'max_value': 48}}
+
+    def validate_name(self, value):
+        value = clean_name(value)
+        if not value:
+            raise serializers.ValidationError('Укажите название салона')
+        return value
 
     def get_logo(self, obj):
         return obj.logo.url if obj.logo else None
