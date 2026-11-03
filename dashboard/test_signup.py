@@ -121,6 +121,32 @@ class SignupTests(TestCase):
         Company.objects.update(status=Company.STATUS_ACTIVE)
         self.assertEqual(self.api.post('/api/staff/verify-email/resend/').status_code, 400)
 
+    def test_name_cleaned_and_letter_sent(self):
+        """Перенос строки и невидимые символы в названии: письмо уходит, название в одну строку."""
+        response = self.signup(salon_name='Bad\nSubject\r\nBcc: x@evil.com \u202eтест\u202c')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Company.objects.get(slug='studio-nogti').name, 'Bad Subject Bcc: x@evil.com тест')
+        self.assertTrue(response.data['email_sent'])
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertNotIn('\n', mail.outbox[0].subject)
+        self.assertIsNone(mail.outbox[0].extra_headers.get('Bcc'))
+        self.assertEqual(self.signup(ip='10.0.3.1', salon_name=' \n\u200b ', slug='empty-name',
+                                     email='e@example.com').status_code, 400)
+
+    def test_phone_is_optional(self):
+        data = {k: v for k, v in SIGNUP.items() if k != 'phone'}
+        response = self.api.post('/api/staff/signup/', data, format='json', HTTP_X_REAL_IP='10.0.4.1')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Company.objects.get(slug='studio-nogti').phone, '')
+
+    def test_total_limit_ignores_spoofed_ip(self):
+        """Подделка X-Real-IP не обходит общий лимит регистраций."""
+        from unittest import mock
+        with mock.patch('dashboard.signup.SIGNUPS_TOTAL_HOUR', 3):
+            codes = [self.signup(ip=f'10.1.0.{i}', slug=f'spoof-{i}', email=f's{i}@example.com').status_code
+                     for i in range(4)]
+        self.assertEqual(codes, [201, 201, 201, 429])
+
     def test_manual_salons_stay_visible(self):
         """Салоны, подключённые вручную, и все прежние — работают как раньше."""
         Company.objects.create(name='Старый', slug='old-salon')
@@ -201,3 +227,13 @@ class OnboardingTests(TestCase):
         self.assertEqual(data['done'], 5)
         self.assertTrue(data['ready'])
         self.assertEqual(data['public_url'], 'https://studio-nogti.salon.test')
+
+
+class CompanyNameTests(TestCase):
+    def test_settings_name_cleaned(self):
+        from dashboard.serializers import StaffCompanySerializer
+        company = Company.objects.create(name='Салон', slug='salon-name')
+        serializer = StaffCompanySerializer(company, data={'name': 'Новое\r\nназвание‮'}, partial=True)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data['name'], 'Новое название')
+        self.assertFalse(StaffCompanySerializer(company, data={'name': '\n '}, partial=True).is_valid())

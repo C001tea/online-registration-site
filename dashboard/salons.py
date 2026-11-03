@@ -13,6 +13,16 @@ from django.utils import timezone
 
 from bookings.models import AdminProfile, Company
 
+# Управляющие и невидимые символы (переносы строк, смена направления текста): в названии ломают
+# заголовки писем и позволяют подделать вид названия
+CONTROL_CHARS = re.compile(r'[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]')
+
+
+def clean_name(value):
+    """Название в одну строку: без управляющих символов, лишние пробелы схлопнуты."""
+    return ' '.join(CONTROL_CHARS.sub(' ', str(value or '')).split())
+
+
 SLUG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$')
 # Поддомены сервиса и служебные адреса — салону их не дать
 RESERVED_SLUGS = {
