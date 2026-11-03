@@ -3,6 +3,8 @@ name: Deploy Backend
 on:
   push:
     branches: [ "main" ]
+  # Ручной запуск: Actions → Deploy Backend → Run workflow (например, после смены секретов — EMAIL_HOST_PASSWORD и др.)
+  workflow_dispatch:
 
 jobs:
   test:
