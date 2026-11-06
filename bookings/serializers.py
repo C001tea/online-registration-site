@@ -51,17 +51,23 @@ class CompanySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'main_photo', 'latitude', 'longitude', 'description',
                   'cancel_hours', 'penalty_percent', 'late_cancel_hours', 'auto_confirm']
 
+# За сколько минут до визита клиент может попросить напоминание (0 — не напоминать)
+REMINDER_CHOICES = [0, 60, 120, 180, 360, 720, 1440, 2880]
+
+
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     # master не обязателен: без него назначается первый свободный мастер услуги
     master = serializers.PrimaryKeyRelatedField(queryset=Master.objects.all(), required=False, allow_null=True)
     service = serializers.PrimaryKeyRelatedField(queryset=Service.objects.all())
     # Согласие на обработку персональных данных (галочка на сайте); False — отказ
     consent = serializers.BooleanField(write_only=True, required=False)
+    # Напоминание: 0 — не нужно; пусто — как обычно
+    reminder_minutes = serializers.ChoiceField(choices=REMINDER_CHOICES, required=False, allow_null=True)
 
     class Meta:
         model = Appointment
         fields = ['master', 'service', 'client_name', 'client_phone', 'client_email', 'date', 'start_time', 'notes',
-                  'consent']
+                  'consent', 'reminder_minutes']
 
     def validate_consent(self, value):
         if not value:
