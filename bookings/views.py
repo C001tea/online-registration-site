@@ -8,7 +8,7 @@ from .i18n import client_lang
 from .security import TOO_MANY_MESSAGE, client_ip, hit
 from .models import Company, Master, Service, Review, Appointment
 from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
-from .slots import get_free_slots, ACTIVE_STATUSES
+from .slots import get_free_slots, month_overview, nearest_slots, parse_month, ACTIVE_STATUSES
 from datetime import datetime, timedelta
 from django.db.models import Avg, Q
 from django.utils import timezone
@@ -155,6 +155,8 @@ class AppointmentCreateView(generics.CreateAPIView):
         response.data['telegram_url'] = notifications.client_url(self.appointment)
         # Экран после записи: «салон подтвердит» или «запись подтверждена»
         response.data['status'] = self.appointment.status
+        # Ссылка «Управлять записью» (перенос, отмена, календарь) — без входа
+        response.data['manage_token'] = self.appointment.manage_token
         return response
 
 
@@ -280,3 +282,63 @@ class MasterServices(generics.ListAPIView):
         company = get_object_or_404(Company.public, slug=self.kwargs['slug'])
         master = get_object_or_404(Master, id=self.kwargs['master_id'], company=company, is_active=True)
         return master.services.filter(is_active=True)
+
+# Календарь с кружками: не дальше стольких месяцев вперёд
+MAX_CALENDAR_MONTHS_AHEAD = 6
+
+
+def bookable_masters(company, params):
+    """Мастера для календаря/ближайших окон с учётом ?service= и ?master= (None — не найдено)."""
+    masters = company.masters.filter(is_active=True, services__is_active=True).distinct()
+    service = None
+    if params.get('service'):
+        if not str(params['service']).isdecimal():
+            return None, None
+        service = Service.objects.filter(company=company, id=params['service'], is_active=True).first()
+        if not service:
+            return None, None
+        masters = masters.filter(services=service)
+    if params.get('master'):
+        if not str(params['master']).isdecimal():
+            return None, None
+        masters = masters.filter(id=params['master'])
+    return masters, service
+
+
+class CalendarView(APIView):
+    """Загруженность дней месяца для календаря записи: рабочий ли день, доля занятого времени,
+    сколько свободных времён начала (для услуги — с её длительностью)."""
+
+    def get(self, request, slug):
+        company = get_object_or_404(Company.public, slug=slug)
+        period = parse_month(request.query_params.get('month'))
+        if not period:
+            return Response({'error': 'Month format: YYYY-MM'}, status=status.HTTP_400_BAD_REQUEST)
+        today = timezone.localdate()
+        months_ahead = (period[0].year - today.year) * 12 + period[0].month - today.month
+        if months_ahead < 0 or months_ahead > MAX_CALENDAR_MONTHS_AHEAD:
+            return Response({'month': request.query_params['month'], 'days': []})
+        masters, service = bookable_masters(company, request.query_params)
+        if masters is None:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        days = month_overview(masters, period[0], period[1], service.duration if service else None)
+        return Response({'month': request.query_params['month'], 'days': days})
+
+
+class NearestSlotsView(APIView):
+    """Ближайшие свободные окна каждого мастера (до 14 дней вперёд, первые 4 времени)."""
+
+    def get(self, request, slug):
+        company = get_object_or_404(Company.public, slug=slug)
+        masters, service = bookable_masters(company, request.query_params)
+        if masters is None:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        result = []
+        for master in masters:
+            nearest = nearest_slots(master, service.duration if service else 30)
+            result.append({
+                'master': master.id,
+                'date': nearest[0].isoformat() if nearest else None,
+                'slots': [slot.strftime('%H:%M') for slot in nearest[1]] if nearest else [],
+            })
+        return Response(result)

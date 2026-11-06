@@ -155,6 +155,17 @@ def staff_cancelled(appointment):
             f'Клиент: {escape(appointment.client_name)}, {escape(appointment.client_phone)}')
 
 
+def manage_line(appointment, url):
+    lang = lang_of(appointment)
+    return '\n\n' + tr('Перенести или отменить: {url}', lang, url=escape(url))
+
+
+def staff_rescheduled(before, appointment):
+    old = f"{before['date']:%d.%m} {before['start_time']:%H:%M}"
+    return (f'🔄 <b>Клиент перенёс запись</b> (было {old})\n{details(appointment)}\n'
+            f'Клиент: {escape(appointment.client_name)}, {escape(appointment.client_phone)}')
+
+
 def reminder_24h(appointment):
     return client_message('🔔 <b>Напоминаем о записи завтра</b>', appointment)
 

@@ -1,7 +1,8 @@
+from collections import defaultdict
 from datetime import datetime, timedelta
 from django.utils import timezone
 from .models import Appointment
-from .schedule import day_schedule
+from .schedule import day_schedule, days_schedule
 
 SLOT_STEP = timedelta(minutes=30)
 # Предстоящие записи, которые ещё можно подтвердить или отменить
@@ -9,6 +10,34 @@ ACTIVE_STATUSES = ['pending', 'confirmed']
 # Записи, которые занимают время мастера. completed — «клиент пришёл»: визит может идти
 # прямо сейчас. cancelled и no_show время освобождают.
 BUSY_STATUSES = ['pending', 'confirmed', 'completed']
+
+
+def local_now():
+    return timezone.localtime().replace(tzinfo=None)
+
+
+def free_starts(date, schedule, busy, duration_minutes, step=SLOT_STEP, now=None):
+    """Свободное время начала (datetime.time) в рабочем дне schedule.
+
+    busy — [(time начала, time конца)] занятых записей; обед из schedule добавляется сам;
+    now — naive datetime: время до него (включительно) не предлагается.
+    """
+    if not schedule.is_working:
+        return []
+    intervals = [(datetime.combine(date, start), datetime.combine(date, end))
+                 for start, end in list(busy) + schedule.breaks]
+    duration = timedelta(minutes=duration_minutes)
+    current = datetime.combine(date, schedule.start)
+    end = datetime.combine(date, schedule.end)
+    result = []
+    while current + duration <= end:
+        slot_end = current + duration
+        is_past = now is not None and current <= now
+        is_busy = any(b_start < slot_end and b_end > current for b_start, b_end in intervals)
+        if not is_past and not is_busy:
+            result.append(current.time())
+        current += step
+    return result
 
 
 def get_free_slots(master, date, duration_minutes, exclude_id=None, step=SLOT_STEP, include_past=False):
@@ -32,25 +61,104 @@ def get_free_slots(master, date, duration_minutes, exclude_id=None, step=SLOT_ST
     appointments = Appointment.objects.filter(master=master, date=date, status__in=BUSY_STATUSES)
     if exclude_id is not None:
         appointments = appointments.exclude(pk=exclude_id)
-    busy = [
-        (datetime.combine(date, start), datetime.combine(date, end))
-        for start, end in appointments.values_list('start_time', 'end_time')
-    ]
-    # Обед — как занятое время: запись не может начаться в обед или заходить на него
-    busy += [(datetime.combine(date, start), datetime.combine(date, end)) for start, end in schedule.breaks]
-    now = timezone.localtime().replace(tzinfo=None) if date == today and not include_past else None
+    busy = list(appointments.values_list('start_time', 'end_time'))
+    now = local_now() if date == today and not include_past else None
+    return free_starts(date, schedule, busy, duration_minutes, step, now)
 
-    duration = timedelta(minutes=duration_minutes)
-    current = datetime.combine(date, schedule.start)
-    end = datetime.combine(date, schedule.end)
 
-    free_slots = []
-    while current + duration <= end:
-        slot_end = current + duration
-        is_past = now is not None and current <= now
-        is_busy = any(busy_start < slot_end and busy_end > current for busy_start, busy_end in busy)
-        if not is_past and not is_busy:
-            free_slots.append(current.time())
-        current += step
+def busy_by_master_day(masters, date_from, date_to):
+    """{(master_id, дата): [(начало, конец)]} — занятые записи одним запросом."""
+    result = defaultdict(list)
+    rows = Appointment.objects.filter(
+        master__in=masters, date__gte=date_from, date__lte=date_to, status__in=BUSY_STATUSES,
+    ).values_list('master_id', 'date', 'start_time', 'end_time')
+    for master_id, day, start, end in rows:
+        result[(master_id, day)].append((start, end))
+    return result
 
-    return free_slots
+
+def minutes_between(date, start, end):
+    return max(0, (datetime.combine(date, end) - datetime.combine(date, start)).total_seconds() / 60)
+
+
+def overlap_minutes(date, a_start, a_end, b_start, b_end):
+    start = max(datetime.combine(date, a_start), datetime.combine(date, b_start))
+    end = min(datetime.combine(date, a_end), datetime.combine(date, b_end))
+    return max(0, (end - start).total_seconds() / 60)
+
+
+def work_and_busy_minutes(date, schedule, busy):
+    """Рабочие минуты дня (без обеда) и сколько из них занято записями."""
+    work = minutes_between(date, schedule.start, schedule.end)
+    for b_start, b_end in schedule.breaks:
+        work -= overlap_minutes(date, schedule.start, schedule.end, b_start, b_end)
+    taken = sum(overlap_minutes(date, schedule.start, schedule.end, start, end) for start, end in busy)
+    return max(work, 0), min(taken, max(work, 0))
+
+
+def month_overview(masters, date_from, date_to, duration_minutes=None, step=SLOT_STEP):
+    """Загруженность дней для календаря с кружками.
+
+    [{date, working, load (0..1 — доля занятого рабочего времени мастеров), free (число
+    свободных времён начала для услуги длительностью duration_minutes; без неё — окна по 30 минут)}]
+    Прошедшие дни: free = 0. Запросы: 3 на мастера + 1 на записи.
+    """
+    masters = list(masters)
+    today = timezone.localdate()
+    now = local_now()
+    schedules = {m.id: days_schedule(m, date_from, date_to) for m in masters}
+    busy = busy_by_master_day(masters, date_from, date_to)
+    duration = duration_minutes or 30
+    days = []
+    day = date_from
+    while day <= date_to:
+        work_total = busy_total = 0
+        starts = set()
+        working = False
+        for master in masters:
+            schedule = schedules[master.id][day]
+            if not schedule.is_working:
+                continue
+            working = True
+            master_busy = busy.get((master.id, day), [])
+            work, taken = work_and_busy_minutes(day, schedule, master_busy)
+            work_total += work
+            busy_total += taken
+            if day >= today:
+                starts.update(free_starts(day, schedule, master_busy, duration, step,
+                                          now if day == today else None))
+        days.append({
+            'date': day.isoformat(),
+            'working': working,
+            'load': round(busy_total / work_total, 2) if work_total else 0,
+            'free': len(starts),
+        })
+        day += timedelta(days=1)
+    return days
+
+
+def nearest_slots(master, duration_minutes, days=14, limit=4, step=SLOT_STEP):
+    """Ближайший день с свободным временем у мастера и первые limit времён: (дата, [time]) или None."""
+    today = timezone.localdate()
+    date_to = today + timedelta(days=days - 1)
+    schedules = days_schedule(master, today, date_to)
+    busy = busy_by_master_day([master], today, date_to)
+    now = local_now()
+    day = today
+    while day <= date_to:
+        slots = free_starts(day, schedules[day], busy.get((master.id, day), []), duration_minutes, step,
+                            now if day == today else None)
+        if slots:
+            return day, slots[:limit]
+        day += timedelta(days=1)
+    return None
+
+
+def parse_month(value):
+    """'YYYY-MM' → (первый, последний день месяца) или None."""
+    try:
+        first = datetime.strptime(value or '', '%Y-%m').date()
+    except ValueError:
+        return None
+    next_month = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return first, next_month - timedelta(days=1)
