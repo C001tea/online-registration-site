@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from .models import Appointment, Master, Service
 from .schedule import day_schedule
-from .slots import BUSY_STATUSES, SLOT_STEP, local_now
+from .slots import BUSY_STATUSES, SLOT_STEP, busy_end, local_now
 from .terms import terms
 
 MAX_VISIT_ITEMS = 5
@@ -44,8 +44,8 @@ class Chain:
             if self.exclude_ids:
                 rows = rows.exclude(pk__in=self.exclude_ids)
             self._busy[master.id] = [
-                (datetime.combine(self.date, s), datetime.combine(self.date, e))
-                for s, e in rows.values_list('start_time', 'end_time')
+                (datetime.combine(self.date, s), datetime.combine(self.date, busy_end(e, b)))
+                for s, e, b in rows.values_list('start_time', 'end_time', 'buffer_minutes')
             ]
         return self._busy[master.id]
 

@@ -5,6 +5,7 @@ from rest_framework import serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from bookings import audit
 from bookings.models import Appointment, Master
 from dashboard.errors import StaffError
 from dashboard.permissions import IsStaff, IsStaffManager, IsStaffOwner, NOT_ENOUGH_RIGHTS_MESSAGE
@@ -84,6 +85,8 @@ class CheckoutView(APIView):
         appointment = self.get_appointment(request, pk)
         payment = services.checkout(appointment, method=data['method'], discount=data['discount'], user=request.user,
                                     pay_penalties=data['pay_penalties'])
+        audit.log(appointment, 'paid', request.user,
+                  details={'amount': str(payment.amount), 'discount': str(payment.discount), 'method': payment.method})
         row = services.payment_row(payment)
         row['penalties_paid'] = str(payment.penalties_paid)
         return Response(row, status=status.HTTP_201_CREATED)
@@ -95,6 +98,7 @@ class CheckoutView(APIView):
         deleted, _ = Payment.objects.filter(appointment=appointment).delete()
         if not deleted:
             raise StaffError('Визит не оплачен', status_code=status.HTTP_404_NOT_FOUND)
+        audit.log(appointment, 'payment_cancelled', request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

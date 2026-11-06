@@ -34,7 +34,9 @@ from bookings.slots import ACTIVE_STATUSES, get_free_slots, month_overview, pars
 from bookings.terms import duration_of
 from finance import penalties
 from notifications import services as notifications
+from bookings import audit
 from .errors import StaffError
+from .visit_card import AppointmentCardActions
 from .permissions import IsStaff, IsStaffManager, IsStaffManagerOrReadOnly, get_staff, NOT_ENOUGH_RIGHTS_MESSAGE
 from .photos import replace_photo, uploaded_file
 from .serializers import (
@@ -60,7 +62,7 @@ LOOKUP_WINDOW_SECONDS = 60 * 60
 TOO_MANY_REQUESTS_MESSAGE = 'Слишком много запросов, попробуйте позже'
 PASSWORD_BLOCKED_MESSAGE = 'Слишком много попыток. Попробуйте через 15 минут'
 LOGIN_FAILED_MESSAGE = 'Неверный логин или пароль'
-PAID_LOCKED_FIELDS = ('status', 'date', 'start_time', 'duration', 'master', 'service')
+PAID_LOCKED_FIELDS = ('status', 'date', 'start_time', 'duration', 'master', 'service', 'price', 'discount')
 PAID_LOCKED_MESSAGE = 'Визит оплачен. Чтобы изменить его, владелец сначала отменяет оплату'
 PENALTY_PAID_MESSAGE = 'Штраф по этой записи уже оплачен — сначала отмените оплату штрафа в карточке клиента'
 
@@ -211,14 +213,14 @@ class StaffMeView(APIView):
 
 # --- Журнал записей ---
 
-class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+class AppointmentViewSet(AppointmentCardActions, StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     permission_classes = [IsStaff]
     serializer_class = StaffAppointmentSerializer
     lookup_value_regex = r'\d+'
 
     def get_queryset(self):
         queryset = Appointment.objects.filter(company=self.staff.company).select_related(
-            'master', 'service', 'payment', 'penalty', 'company')
+            'master', 'service', 'payment', 'penalty', 'company', 'telegram')
         if self.staff.role == 'master':
             # Мастер видит и меняет только свои записи
             queryset = queryset.filter(master=self.staff.master)
@@ -252,6 +254,7 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
         serializer = StaffAppointmentWriteSerializer(data=request.data, context=self.get_serializer_context())
         serializer.is_valid(raise_exception=True)
         appointment = serializer.save()
+        audit.log(appointment, 'created', request.user)
         return Response(StaffAppointmentSerializer(appointment).data, status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, pk=None):
@@ -263,11 +266,15 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
         if new_status and new_status != appointment.status and penalties.paid_penalty(appointment):
             raise StaffError(PENALTY_PAID_MESSAGE)
         before = notifications.snapshot(appointment)
+        before_log = audit.snapshot(appointment)
         serializer = StaffAppointmentWriteSerializer(
             appointment, data=request.data, partial=True, context=self.get_serializer_context()
         )
         serializer.is_valid(raise_exception=True)
         appointment = serializer.save()
+        changes = audit.diff(before_log, appointment)
+        if changes:
+            audit.log(appointment, 'updated', request.user, details=changes)
         if appointment.status != before['status']:
             self.penalty_on_status_change(appointment, before['status'], request.data.get('penalty'))
         # Отменили или перенесли — клиенту в Telegram, если он подключён

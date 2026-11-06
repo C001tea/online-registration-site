@@ -13,7 +13,7 @@ from bookings.models import (
     Appointment, ClientProfile, Company, Master, MasterServiceTerms, Service, ServiceCategory,
 )
 from bookings.phone import normalize_phone
-from bookings.slots import BUSY_STATUSES
+from bookings.slots import BUSY_STATUSES, busy_end
 from bookings.terms import duration_of, price_of, terms
 from finance import penalties
 from .errors import StaffError
@@ -122,13 +122,14 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
     payment = serializers.SerializerMethodField()
     blacklist = serializers.SerializerMethodField()
     penalty = serializers.SerializerMethodField()
+    reminder = serializers.SerializerMethodField()
 
     class Meta:
         model = Appointment
         fields = [
             'id', 'date', 'start_time', 'end_time', 'duration', 'status', 'master', 'service',
             'client_name', 'client_phone', 'client_email', 'notes', 'source', 'created_at', 'payment',
-            'blacklist', 'penalty', 'visit',
+            'blacklist', 'penalty', 'visit', 'discount', 'buffer_minutes', 'booker_name', 'booker_phone', 'reminder',
         ]
         read_only_fields = fields
 
@@ -165,6 +166,20 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
             known = penalties.blacklist(obj.company, [obj.client_phone])
         return penalties.blacklist_data(known.get(obj.client_phone))
 
+    def get_reminder(self, obj):
+        """Напоминание клиенту: куда можно отправить и ушло ли уже."""
+        try:
+            link = obj.telegram
+        except ObjectDoesNotExist:
+            link = None
+        telegram = bool(link and link.chat_id)
+        return {
+            'minutes': obj.reminder_minutes,
+            'telegram': telegram,
+            'email': bool(obj.client_email),
+            'sent': bool((telegram and (link.reminder_24h_sent or link.reminder_1h_sent)) or obj.email_reminder_sent),
+        }
+
     def get_penalty(self, obj):
         """Штраф, начисленный по этой записи (не пришёл / поздняя отмена)."""
         penalty = getattr(obj, 'penalty', None)  # нет штрафа — None (hasattr/getattr ловят DoesNotExist)
@@ -200,17 +215,19 @@ def check_visit_date(status_value, date):
         raise StaffError('Отметить визит можно только в день записи или позже')
 
 
-def check_overlap(master, date, start_time, end_time, exclude_pk=None):
-    """Пересечение с занимающими время записями мастера. Вызывать внутри transaction.atomic()."""
+def check_overlap(master, date, start_time, end_time, exclude_pk=None, buffer_minutes=0):
+    """Пересечение с занимающими время записями мастера (с техническими перерывами).
+    Вызывать внутри transaction.atomic()."""
     # Блокируем мастера, чтобы две одновременные записи не заняли одно время
     Master.objects.select_for_update().get(pk=master.pk)
-    overlapping = Appointment.objects.filter(
-        master=master, date=date, status__in=BUSY_STATUSES,
-        start_time__lt=end_time, end_time__gt=start_time,  # касание концами допустимо
+    candidates = Appointment.objects.filter(
+        master=master, date=date, status__in=BUSY_STATUSES, start_time__lt=busy_end(end_time, buffer_minutes),
     )
     if exclude_pk is not None:
-        overlapping = overlapping.exclude(pk=exclude_pk)
-    other = overlapping.order_by('start_time').first()
+        candidates = candidates.exclude(pk=exclude_pk)
+    # касание концами допустимо
+    other = next((a for a in candidates.order_by('start_time')
+                  if busy_end(a.end_time, a.buffer_minutes) > start_time), None)
     if other:
         raise StaffError(
             f'Пересекается с записью {other.start_time:%H:%M}–{other.end_time:%H:%M} ({other.client_name})'
@@ -232,6 +249,12 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
     client_email = serializers.EmailField(max_length=254, required=False, allow_blank=True)
     notes = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     status = serializers.ChoiceField(choices=Appointment.STATUS_CHOICES, required=False)
+    price = serializers.DecimalField(max_digits=8, decimal_places=2, min_value=Decimal('0'), required=False)
+    discount = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=Decimal('0'),
+                                        max_value=Decimal('100'), required=False)
+    buffer_minutes = serializers.IntegerField(min_value=0, max_value=120, required=False)
+    booker_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    booker_phone = serializers.CharField(max_length=32, required=False, allow_blank=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -246,6 +269,14 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
             self.fields.pop('status')
 
     def validate_client_phone(self, value):
+        phone = normalize_phone(value.strip(), PHONE_REGION)
+        if not phone:
+            raise serializers.ValidationError('Неверный номер телефона')
+        return phone
+
+    def validate_booker_phone(self, value):
+        if not value.strip():
+            return ''
         phone = normalize_phone(value.strip(), PHONE_REGION)
         if not phone:
             raise serializers.ValidationError('Неверный номер телефона')
@@ -278,10 +309,11 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
         end_time = calc_end_time(date, data['start_time'], duration)
         status_value = data.get('status', 'confirmed')
         check_visit_date(status_value, date)
+        buffer_minutes = data.get('buffer_minutes', 0)
 
         with transaction.atomic():
             if status_value in BUSY_STATUSES:
-                check_overlap(master, date, data['start_time'], end_time)
+                check_overlap(master, date, data['start_time'], end_time, buffer_minutes=buffer_minutes)
             return Appointment.objects.create(
                 company=staff.company,
                 master=master,
@@ -289,7 +321,11 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
                 date=date,
                 start_time=data['start_time'],
                 end_time=end_time,
-                price=price,
+                price=data.get('price', price),
+                discount=data.get('discount', Decimal('0')),
+                buffer_minutes=buffer_minutes,
+                booker_name=data.get('booker_name', ''),
+                booker_phone=data.get('booker_phone', ''),
                 status=status_value,
                 client_name=data['client_name'],
                 client_phone=data['client_phone'],
@@ -319,6 +355,8 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
             'start_time': instance.start_time, 'duration': old_duration, 'status': instance.status,
             'client_name': instance.client_name, 'client_phone': instance.client_phone,
             'client_email': instance.client_email, 'notes': instance.notes,
+            'price': instance.price, 'discount': instance.discount, 'buffer_minutes': instance.buffer_minutes,
+            'booker_name': instance.booker_name, 'booker_phone': instance.booker_phone,
         }
         # Поля с тем же значением, что и сейчас, считаем не переданными
         changes = {key: value for key, value in data.items() if value != current[key]}
@@ -355,13 +393,15 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
         if 'status' in changes or date != instance.date:
             check_visit_date(status_value, date)
 
+        buffer_minutes = data.get('buffer_minutes', instance.buffer_minutes)
         need_overlap_check = (
             master is not None and status_value in BUSY_STATUSES
-            and (master_changed or service_changed or timing_changed or instance.status not in BUSY_STATUSES)
+            and (master_changed or service_changed or timing_changed or instance.status not in BUSY_STATUSES
+                 or buffer_minutes > instance.buffer_minutes)
         )
         if need_overlap_check:
             # Блокирует мастера (куда ставим запись) и проверяет пересечения
-            check_overlap(master, date, start_time, end_time, exclude_pk=instance.pk)
+            check_overlap(master, date, start_time, end_time, exclude_pk=instance.pk, buffer_minutes=buffer_minutes)
 
         updates = {
             'master': master, 'service': service, 'date': date, 'start_time': start_time,
@@ -370,7 +410,8 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
         if (master_changed or service_changed) and service is not None:
             # Цена визита — у нового мастера / новой услуги
             updates['price'] = terms(master, service)[1]
-        for field in ('client_name', 'client_email', 'notes'):
+        for field in ('client_name', 'client_email', 'notes', 'price', 'discount', 'buffer_minutes',
+                      'booker_name', 'booker_phone'):
             if field in changes:
                 updates[field] = changes[field]
         if 'client_phone' in changes:

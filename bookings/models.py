@@ -130,6 +130,13 @@ class Appointment(models.Model):
     price = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     # Визит из нескольких услуг подряд: общий uuid у всех его записей (bookings/visits.py)
     visit = models.UUIDField(null=True, blank=True, db_index=True)
+    # Скидка на услугу в процентах (ставит персонал в карточке; подставляется при оплате)
+    discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # Технический перерыв после записи (уборка, подготовка): мастер занят ещё столько минут
+    buffer_minutes = models.PositiveSmallIntegerField(default=0)
+    # Записывает другой человек: кто звонил (клиент записи — тот, кто придёт)
+    booker_name = models.CharField(max_length=200, blank=True)
+    booker_phone = models.CharField(max_length=20, blank=True)
     # Секрет ссылки «Управлять записью»: клиент переносит или отменяет запись без входа
     manage_token = models.CharField(max_length=32, unique=True, null=True, blank=True, editable=False)
 
@@ -140,6 +147,20 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"{self.client_name} - {self.date} {self.start_time}"
+
+
+class AppointmentLog(models.Model):
+    """История изменений записи (bookings/audit.py)."""
+    appointment = models.ForeignKey(Appointment, on_delete=models.CASCADE, related_name='logs')
+    created_at = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    # staff — сотрудник в панели, client — клиент (сайт, бот, ссылка), system — автоматически
+    actor = models.CharField(max_length=10, default='staff')
+    action = models.CharField(max_length=30)
+    details = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
 
 
 class MasterServiceTerms(models.Model):
