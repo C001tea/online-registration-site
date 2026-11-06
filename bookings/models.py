@@ -120,6 +120,12 @@ class Appointment(models.Model):
     client = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
     # Запись создана персоналом в панели салона (а не клиентом онлайн)
     created_by_staff = models.BooleanField(default=False)
+    # За сколько минут до визита напомнить (выбор клиента): пусто — как обычно (Telegram за сутки и за час,
+    # письмо за сутки), 0 — не напоминать
+    reminder_minutes = models.PositiveIntegerField(null=True, blank=True)
+    # Письма клиенту отправлены: подтверждение записи и напоминание
+    email_confirm_sent = models.BooleanField(default=False)
+    email_reminder_sent = models.BooleanField(default=False)
     # Цена услуги на момент записи (у мастера может быть своя цена); пусто — цена услуги
     price = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     # Секрет ссылки «Управлять записью»: клиент переносит или отменяет запись без входа

@@ -354,7 +354,7 @@ def queue_reminders(now=None):
     links = AppointmentTelegram.objects.filter(
         chat_id__isnull=False,
         appointment__status__in=ACTIVE_STATUSES,
-        appointment__date__gte=today, appointment__date__lte=today + timedelta(days=2),
+        appointment__date__gte=today, appointment__date__lte=today + timedelta(days=3),
     ).select_related('appointment__company', 'appointment__master', 'appointment__service')
     queued = 0
     for link in links:
@@ -365,6 +365,14 @@ def queue_reminders(now=None):
         if left <= timedelta(0):
             continue
         with transaction.atomic():
+            if appointment.reminder_minutes is not None:
+                # Клиент выбрал своё время напоминания (0 — не напоминать): одно сообщение
+                minutes = appointment.reminder_minutes
+                if minutes and left <= timedelta(minutes=minutes) and lead > timedelta(minutes=minutes) + timedelta(minutes=30) \
+                        and not link.reminder_24h_sent and mark_once(link, 'reminder_24h_sent'):
+                    enqueue(link.chat_id, texts.reminder_custom(appointment), client_buttons(link))
+                    queued += 1
+                continue
             if left <= timedelta(hours=1):
                 if not link.reminder_1h_sent and lead > REMINDER_1H_MIN_LEAD and mark_once(link, 'reminder_1h_sent'):
                     enqueue(link.chat_id, texts.reminder_1h(appointment))

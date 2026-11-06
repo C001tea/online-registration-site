@@ -26,6 +26,12 @@ RO = {
     'Прошедшую запись нельзя отменить': 'O programare trecută nu poate fi anulată',
     'Запись отменена': 'Programarea a fost anulată',
     'Перенести или отменить: {url}': 'Mutați sau anulați: {url}',
+    '🔔 <b>Напоминаем о записи</b>': '🔔 <b>Vă reamintim de programare</b>',
+    'Вы записаны: {salon}': 'Sunteți programat(ă): {salon}',
+    'Вы записаны. Ждём вас!': 'Sunteți programat(ă). Vă așteptăm!',
+    'Напоминание о записи: {salon}': 'Memento despre programare: {salon}',
+    'Напоминаем о вашей записи.': 'Vă reamintim de programarea dvs.',
+    'Телефон салона: {phone}': 'Telefonul salonului: {phone}',
     'Эту запись нельзя перенести': 'Această programare nu poate fi mutată',
     'Перенести запись онлайн уже нельзя. Позвоните в салон':
         'Programarea nu mai poate fi mutată online. Sunați la salon',

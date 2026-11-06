@@ -171,6 +171,10 @@ def reminder_24h(appointment):
     return client_message('🔔 <b>Напоминаем о записи завтра</b>', appointment)
 
 
+def reminder_custom(appointment):
+    return client_message('🔔 <b>Напоминаем о записи</b>', appointment)
+
+
 def reminder_1h(appointment):
     return client_message('⏰ <b>Через час ждём вас</b>', appointment)
 
