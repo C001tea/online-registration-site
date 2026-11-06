@@ -5,6 +5,7 @@
 from html import escape
 
 from bookings.i18n import MONTHS, WEEKDAYS, tr
+from bookings.terms import price_of
 
 STATUS_LINES = {
     'pending': '⏳ Ждём вашего подтверждения',
@@ -63,7 +64,7 @@ def penalty_reason(penalty, lang='ru', who='client'):
     """«28 октября, 14:00 — не пришёл(-ли) на «Маникюр» (200 L)» — за что штраф."""
     a = penalty.appointment
     when_text = f'{a.date.day} {MONTHS[lang][a.date.month - 1]}, {a.start_time:%H:%M}'
-    service = f'«{escape(a.service.name)}» ({money(a.service.price)})' if a.service else ''
+    service = f'«{escape(a.service.name)}» ({money(price_of(a))})' if a.service else ''
     if penalty.kind == 'no_show':
         what = tr('не пришёл на {service}, не предупредив' if who == 'staff' else 'вы не пришли на {service}',
                   lang, service=service or tr('запись', lang))

@@ -20,11 +20,18 @@ from .models import Appointment, Master
 from .rules import cancel_rule_text, client_can_cancel, starts_at
 from .security import TOO_MANY_MESSAGE, client_ip, hit
 from .slots import ACTIVE_STATUSES, get_free_slots
+from .terms import price_of
 
 # Запросов по ссылкам управления с одного IP в час (защита от перебора и спама)
 MANAGE_PER_IP_HOUR = 300
 RESCHEDULES_PER_APPOINTMENT_DAY = 5
 LATE_RESCHEDULE_MESSAGE = 'Перенести запись онлайн уже нельзя. Позвоните в салон'
+
+
+def visit_minutes(appointment):
+    """Длительность визита как записано (салон мог её поменять вручную)."""
+    start = datetime.combine(appointment.date, appointment.start_time)
+    return int((datetime.combine(appointment.date, appointment.end_time) - start).total_seconds() // 60)
 
 
 def can_reschedule(appointment, now=None):
@@ -39,7 +46,7 @@ def appointment_data(appointment):
         'salon': {'name': company.name, 'slug': company.slug, 'address': company.address, 'phone': company.phone},
         'master': {'id': appointment.master_id, 'name': appointment.master.name} if appointment.master else None,
         'service': ({'id': appointment.service_id, 'name': appointment.service.name,
-                     'duration': appointment.service.duration, 'price': str(appointment.service.price)}
+                     'duration': visit_minutes(appointment), 'price': str(price_of(appointment))}
                     if appointment.service else None),
         'date': appointment.date.isoformat(),
         'start_time': appointment.start_time.strftime('%H:%M'),
@@ -109,7 +116,7 @@ class ManageSlotsView(ManageMixin, APIView):
             return Response({'error': 'Date format: YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
         if not can_reschedule(appointment) or not appointment.master or not appointment.service:
             return Response({'date': date.isoformat(), 'slots': []})
-        slots = get_free_slots(appointment.master, date, appointment.service.duration, exclude_id=appointment.id)
+        slots = get_free_slots(appointment.master, date, visit_minutes(appointment), exclude_id=appointment.id)
         return Response({'date': date.isoformat(), 'slots': [s.strftime('%H:%M') for s in slots]})
 
 
@@ -133,7 +140,7 @@ class ManageRescheduleView(ManageMixin, APIView):
         before = notifications.snapshot(appointment)
         with transaction.atomic():
             master = Master.objects.select_for_update().get(pk=appointment.master_id)
-            duration = appointment.service.duration
+            duration = visit_minutes(appointment)
             if start not in get_free_slots(master, date, duration, exclude_id=appointment.id):
                 return error('Это время уже заняли. Выберите другое.', request)
             appointment.date = date

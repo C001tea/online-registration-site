@@ -9,6 +9,7 @@ from .security import TOO_MANY_MESSAGE, client_ip, hit
 from .models import Company, Master, Service, Review, Appointment
 from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
 from .slots import get_free_slots, month_overview, nearest_slots, parse_month, ACTIVE_STATUSES
+from .terms import duration_of, service_ranges, terms
 from datetime import datetime, timedelta
 from django.db.models import Avg, Q
 from django.utils import timezone
@@ -69,6 +70,7 @@ class ServiceListView(APIView):
         date = request.query_params.get("date")
         time = request.query_params.get("time")
 
+        master = None
         if master_id:
             master = get_object_or_404(Master, company=company, id=master_id, is_active=True)
             services = services.filter(masters=master)
@@ -85,14 +87,14 @@ class ServiceListView(APIView):
             fitting_ids = []
             for service in services:
                 for master in company.masters.filter(services=service, is_active=True):
-                    if targeted_time in get_free_slots(master, date, service.duration):
+                    if targeted_time in get_free_slots(master, date, duration_of(master, service)):
                         fitting_ids.append(service.id)
                         break
             services = services.filter(id__in=fitting_ids)
 
-        serializer = ServiceSerializer(services, many=True)
-
-        return Response(serializer.data)
+        services = list(services)
+        context = {'master': master} if master else {'ranges': service_ranges(services)}
+        return Response(ServiceSerializer(services, many=True, context=context).data)
 
 
 class AppointmentCreateView(generics.CreateAPIView):
@@ -125,10 +127,11 @@ class AppointmentCreateView(generics.CreateAPIView):
         # Блокируем мастера, чтобы два одновременных запроса не заняли одно время
         with transaction.atomic():
             master = Master.objects.select_for_update().get(pk=data['master'].pk)
-            if data['start_time'] not in get_free_slots(master, data['date'], service.duration):
+            duration, price = terms(master, service)
+            if data['start_time'] not in get_free_slots(master, data['date'], duration):
                 raise ValidationError({'non_field_errors': ['Это время уже заняли. Выберите другое.']})
 
-            end_dt = datetime.combine(data['date'], data['start_time']) + timedelta(minutes=service.duration)
+            end_dt = datetime.combine(data['date'], data['start_time']) + timedelta(minutes=duration)
             client = self.request.user if self.request.user.is_authenticated else None
 
             appointment = serializer.save(
@@ -136,6 +139,7 @@ class AppointmentCreateView(generics.CreateAPIView):
                 master=master,
                 status='confirmed' if self.get_company().auto_confirm else 'pending',
                 end_time=end_dt.time(),
+                price=price,
                 client=client,
                 lang=client_lang(self.request),
             )
@@ -199,7 +203,7 @@ class SlotListView(APIView):
 
         # Скрытый мастер/услуга или мастер не оказывает услугу — записаться нельзя
         bookable = master.is_active and service.is_active and master.services.filter(id=service.id).exists()
-        free_slots = [slot.strftime('%H:%M') for slot in get_free_slots(master, date, service.duration)] if bookable else []
+        free_slots = [slot.strftime('%H:%M') for slot in get_free_slots(master, date, duration_of(master, service))] if bookable else []
 
         return Response({
             'date': date_str,
@@ -275,13 +279,12 @@ class ReviewView(APIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class MasterServices(generics.ListAPIView):
-    serializer_class = ServiceSerializer
-
-    def get_queryset(self):
-        company = get_object_or_404(Company.public, slug=self.kwargs['slug'])
-        master = get_object_or_404(Master, id=self.kwargs['master_id'], company=company, is_active=True)
-        return master.services.filter(is_active=True)
+class MasterServices(APIView):
+    def get(self, request, slug, master_id):
+        company = get_object_or_404(Company.public, slug=slug)
+        master = get_object_or_404(Master, id=master_id, company=company, is_active=True)
+        services = master.services.filter(is_active=True)
+        return Response(ServiceSerializer(services, many=True, context={'master': master}).data)
 
 # Календарь с кружками: не дальше стольких месяцев вперёд
 MAX_CALENDAR_MONTHS_AHEAD = 6
@@ -321,7 +324,7 @@ class CalendarView(APIView):
         masters, service = bookable_masters(company, request.query_params)
         if masters is None:
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
-        days = month_overview(masters, period[0], period[1], service.duration if service else None)
+        days = month_overview(masters, period[0], period[1], (lambda m: duration_of(m, service)) if service else None)
         return Response({'month': request.query_params['month'], 'days': days})
 
 
@@ -335,7 +338,7 @@ class NearestSlotsView(APIView):
             return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
         result = []
         for master in masters:
-            nearest = nearest_slots(master, service.duration if service else 30)
+            nearest = nearest_slots(master, duration_of(master, service) if service else 30)
             result.append({
                 'master': master.id,
                 'date': nearest[0].isoformat() if nearest else None,

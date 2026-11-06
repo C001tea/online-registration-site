@@ -108,7 +108,12 @@ def month_overview(masters, date_from, date_to, duration_minutes=None, step=SLOT
     now = local_now()
     schedules = {m.id: days_schedule(m, date_from, date_to) for m in masters}
     busy = busy_by_master_day(masters, date_from, date_to)
-    duration = duration_minutes or 30
+    def duration_for(master):
+        if callable(duration_minutes):
+            return duration_minutes(master)
+        return duration_minutes or 30
+
+    durations = {m.id: duration_for(m) for m in masters}
     days = []
     day = date_from
     while day <= date_to:
@@ -125,7 +130,7 @@ def month_overview(masters, date_from, date_to, duration_minutes=None, step=SLOT
             work_total += work
             busy_total += taken
             if day >= today:
-                starts.update(free_starts(day, schedule, master_busy, duration, step,
+                starts.update(free_starts(day, schedule, master_busy, durations[master.id], step,
                                           now if day == today else None))
         days.append({
             'date': day.isoformat(),
