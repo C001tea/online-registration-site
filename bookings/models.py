@@ -1,7 +1,12 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+import secrets
 import uuid
+
+
+def new_manage_token():
+    return secrets.token_urlsafe(18)
 
 
 class PublicCompanyManager(models.Manager):
@@ -115,6 +120,13 @@ class Appointment(models.Model):
     client = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
     # Запись создана персоналом в панели салона (а не клиентом онлайн)
     created_by_staff = models.BooleanField(default=False)
+    # Секрет ссылки «Управлять записью»: клиент переносит или отменяет запись без входа
+    manage_token = models.CharField(max_length=32, unique=True, null=True, blank=True, editable=False)
+
+    def save(self, *args, **kwargs):
+        if not self.manage_token:
+            self.manage_token = new_manage_token()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.client_name} - {self.date} {self.start_time}"

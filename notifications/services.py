@@ -1,6 +1,7 @@
 """Уведомления о записях: очередь сообщений, обработка команд бота, напоминания."""
 import logging
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
 from django.db import transaction
@@ -96,9 +97,20 @@ def blacklist_of(appointment):
         .order_by('appointment__date', 'appointment__start_time'))
 
 
+def manage_url(appointment):
+    """Ссылка «Управлять записью» на сайте салона: /manage/<токен> с тем же ?salon= или поддоменом."""
+    if not appointment.manage_token:
+        return None
+    parts = urlsplit(settings.SALON_URL_TEMPLATE.format(slug=appointment.company.slug))
+    return urlunsplit((parts.scheme, parts.netloc, f'/manage/{appointment.manage_token}', parts.query, ''))
+
+
 def card_text(appointment):
     """Карточка записи клиенту; если есть долг — блок: за что штраф и что оплатить при визите."""
     text = texts.client_card(appointment)
+    url = manage_url(appointment)
+    if url and appointment.status in ACTIVE_STATUSES:
+        text += texts.manage_line(appointment, url)
     unpaid = [p for p in blacklist_of(appointment) if p.status == 'unpaid']
     if unpaid and appointment.status in ACTIVE_STATUSES:
         text += texts.debt_note(appointment, unpaid)
@@ -137,6 +149,16 @@ def appointment_changed_by_staff(before, appointment):
         # Новое время — напоминания нужны заново
         AppointmentTelegram.objects.filter(pk=link.pk).update(reminder_24h_sent=False, reminder_1h_sent=False)
         enqueue(link.chat_id, texts.salon_moved(appointment), client_buttons(link))
+
+
+def appointment_rescheduled_by_client(before, appointment):
+    """Клиент перенёс запись по ссылке: салону — сообщение, клиенту — новое время, напоминания заново."""
+    notify_staff(appointment, texts.staff_rescheduled(before, appointment))
+    link = AppointmentTelegram.objects.filter(appointment=appointment).first()
+    if link:
+        AppointmentTelegram.objects.filter(pk=link.pk).update(reminder_24h_sent=False, reminder_1h_sent=False)
+        if link.chat_id:
+            enqueue(link.chat_id, texts.salon_moved(appointment), client_buttons(link))
 
 
 def snapshot(appointment):

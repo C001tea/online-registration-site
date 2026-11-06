@@ -27,6 +27,7 @@ urlpatterns = [
     path('auth/password/', views.StaffPasswordView.as_view(), name='staff-password'),
     path('me/', views.StaffMeView.as_view(), name='staff-me'),
     path('free-times/', views.FreeTimesView.as_view(), name='staff-free-times'),
+    path('calendar/', views.StaffCalendarView.as_view(), name='staff-calendar'),
     path('clients/lookup/', views.ClientLookupView.as_view(), name='staff-client-lookup'),
     path('clients/', clients.ClientListView.as_view(), name='staff-clients'),
     path('clients/card/', clients.ClientCardView.as_view(), name='staff-client-card'),

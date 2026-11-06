@@ -30,7 +30,7 @@ from bookings.models import (
 )
 from bookings.schedule import day_schedule, days_schedule
 from bookings.phone import normalize_phone
-from bookings.slots import ACTIVE_STATUSES, get_free_slots
+from bookings.slots import ACTIVE_STATUSES, get_free_slots, month_overview, parse_month
 from finance import penalties
 from notifications import services as notifications
 from .errors import StaffError
@@ -51,6 +51,8 @@ CLIENT_ACCOUNT_MESSAGE = 'Это клиентский аккаунт — пар�
 MAX_JOURNAL_DAYS = 30
 # Список новых записей (бейдж «Новые»): без ограничения по дате, но не больше стольких строк
 MAX_PENDING_ITEMS = 200
+# Всплывающих «Новая запись» за один опрос — не больше
+MAX_RECENT_ONLINE = 20
 # Поиск клиента по телефону: не больше LOOKUP_LIMIT запросов в час на пользователя панели
 LOOKUP_LIMIT = 120
 LOOKUP_WINDOW_SECONDS = 60 * 60
@@ -296,10 +298,49 @@ class AppointmentViewSet(StaffViewMixin, mixins.ListModelMixin, mixins.RetrieveM
                    'blacklist': penalties.blacklist(self.staff.company, [a.client_phone for a in queryset])}
         return Response(StaffAppointmentSerializer(queryset, many=True, context=context).data)
 
+    @action(detail=False, methods=['get'], url_path='recent-online')
+    def recent_online(self, request):
+        """Онлайн-записи, созданные клиентами после ?since= (ISO-время): всплывающее «Новая запись»."""
+        since = request.query_params.get('since')
+        try:
+            since_dt = datetime.fromisoformat((since or '').replace('Z', '+00:00'))
+        except ValueError:
+            raise StaffError('since — время в формате ISO 8601')
+        if timezone.is_naive(since_dt):
+            since_dt = timezone.make_aware(since_dt)
+        queryset = list(self.get_queryset().filter(created_by_staff=False, created_at__gt=since_dt)
+                        .order_by('-created_at')[:MAX_RECENT_ONLINE])
+        return Response({
+            'now': timezone.now().isoformat(),
+            'items': StaffAppointmentSerializer(queryset, many=True, context=self.get_serializer_context()).data,
+        })
+
     @action(detail=False, methods=['get'], url_path='pending-count')
     def pending_count(self, request):
         # Тот же набор, что и в списке pending/ (список обрезается до MAX_PENDING_ITEMS)
         return Response({'count': self.pending_queryset().count()})
+
+
+class StaffCalendarView(APIView):
+    """Мини-календарь журнала: загруженность каждого дня месяца по мастерам салона
+    (мастер видит только себя; ?master= — один мастер)."""
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        staff = request.staff
+        period = parse_month(request.query_params.get('month'))
+        if not period:
+            raise StaffError('Укажите month в формате YYYY-MM')
+        masters = Master.objects.filter(company=staff.company, is_active=True)
+        if staff.role == 'master':
+            masters = masters.filter(pk=staff.master.pk)
+        elif request.query_params.get('master'):
+            master_id = parse_int(request.query_params.get('master'))
+            if master_id is None:
+                raise StaffError('master — id мастера (целое число)')
+            masters = masters.filter(pk=master_id)
+        return Response({'month': request.query_params['month'],
+                         'days': month_overview(masters, period[0], period[1])})
 
 
 class FreeTimesView(APIView):
