@@ -12,6 +12,8 @@ urlpatterns = [
     path('companies/<slug:slug>/points/', views.SelectData.as_view()),
     path('companies/<slug:slug>/calendar/', views.CalendarView.as_view()),
     path('companies/<slug:slug>/nearest/', views.NearestSlotsView.as_view()),
+    path('companies/<slug:slug>/visit-slots/', views.VisitSlotsView.as_view()),
+    path('companies/<slug:slug>/visits/', views.VisitCreateView.as_view()),
     path('manage/<str:token>/', manage_views.ManageAppointmentView.as_view()),
     path('manage/<str:token>/cancel/', manage_views.ManageCancelView.as_view()),
     path('manage/<str:token>/slots/', manage_views.ManageSlotsView.as_view()),

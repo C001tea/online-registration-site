@@ -128,6 +128,8 @@ class Appointment(models.Model):
     email_reminder_sent = models.BooleanField(default=False)
     # Цена услуги на момент записи (у мастера может быть своя цена); пусто — цена услуги
     price = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    # Визит из нескольких услуг подряд: общий uuid у всех его записей (bookings/visits.py)
+    visit = models.UUIDField(null=True, blank=True, db_index=True)
     # Секрет ссылки «Управлять записью»: клиент переносит или отменяет запись без входа
     manage_token = models.CharField(max_length=32, unique=True, null=True, blank=True, editable=False)
 
