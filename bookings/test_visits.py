@@ -45,6 +45,10 @@ class VisitTests(TestCase):
         # Последнее начало: 12:30 (маникюр до 13:30, брови до 14:00)
         self.assertEqual(slots[-1]['start_time'], '12:30')
 
+    def test_any_master_prefers_chosen_one(self):
+        first = self.slots(f'{self.brows.id}:{self.olga.id},{self.manicure.id}')[0]
+        self.assertEqual([p['master_name'] for p in first['parts']], ['Ольга', 'Ольга'])
+
     def test_busy_master_shifts_chain(self):
         Appointment.objects.create(company=self.company, master=self.olga, service=self.brows, client_name='А',
                                    client_phone='+37369000000', date=self.day, start_time=time(11),

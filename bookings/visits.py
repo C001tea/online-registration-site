@@ -111,7 +111,7 @@ def parse_items(company, raw):
         raise ValueError('Выберите услуги')
     if len(raw) > MAX_VISIT_ITEMS:
         raise ValueError(f'В одном визите не больше {MAX_VISIT_ITEMS} услуг')
-    items = []
+    items, chosen = [], []
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError('Выберите услуги')
@@ -126,9 +126,12 @@ def parse_items(company, raw):
             masters = masters.filter(id=master_id)
             if not masters:
                 raise ValueError('Мастер не оказывает эту услугу.')
-        candidates = list(masters)
+        # «Любой мастер»: сначала те, кого клиент уже выбрал в этом визите — услуги у одного мастера подряд
+        candidates = sorted(masters, key=lambda m: (m.id not in chosen, m.id))
         if not candidates:
             raise ValueError('На эту услугу нет мастеров.')
+        if master_id:
+            chosen.append(candidates[0].id)
         items.append((candidates, service))
     return items
 
