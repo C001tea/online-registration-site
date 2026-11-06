@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from bookings.models import Appointment
+from bookings.terms import price_of
 from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES
 from .errors import StaffError
@@ -160,7 +161,7 @@ def history_item(a):
         'status': a.status,
         'service': a.service.name if a.service else None,
         'master': a.master.name if a.master else None,
-        'price': str(a.service.price) if a.service else None,
+        'price': str(price_of(a)) if a.service else None,
         'paid': str(payment.amount) if payment else None,
         'notes': a.notes,
     }

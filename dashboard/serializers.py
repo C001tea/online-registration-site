@@ -9,9 +9,12 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers, status
 
-from bookings.models import Appointment, ClientProfile, Company, Master, Service, ServiceCategory
+from bookings.models import (
+    Appointment, ClientProfile, Company, Master, MasterServiceTerms, Service, ServiceCategory,
+)
 from bookings.phone import normalize_phone
 from bookings.slots import BUSY_STATUSES
+from bookings.terms import duration_of, price_of, terms
 from finance import penalties
 from .errors import StaffError
 from .salons import clean_name
@@ -142,7 +145,7 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
             return None
         return {
             'id': obj.service.id, 'name': obj.service.name,
-            'price': str(obj.service.price.quantize(Decimal('0.01'))), 'is_active': obj.service.is_active,
+            'price': str(Decimal(str(price_of(obj))).quantize(Decimal('0.01'))), 'is_active': obj.service.is_active,
         }
 
     def get_source(self, obj):
@@ -270,7 +273,8 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
 
         master, service, date = data['master'], data['service'], data['date']
         self.check_master_service(master, service, True, True)
-        duration = data.get('duration', service.duration)
+        default_duration, price = terms(master, service)
+        duration = data.get('duration', default_duration)
         end_time = calc_end_time(date, data['start_time'], duration)
         status_value = data.get('status', 'confirmed')
         check_visit_date(status_value, date)
@@ -285,6 +289,7 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
                 date=date,
                 start_time=data['start_time'],
                 end_time=end_time,
+                price=price,
                 status=status_value,
                 client_name=data['client_name'],
                 client_phone=data['client_phone'],
@@ -333,8 +338,11 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
         start_time = data.get('start_time', instance.start_time)
         if 'duration' in data:
             duration = data['duration']
-        elif service_changed:
-            duration = service.duration
+        elif service_changed or (master_changed and service is not None and master is not None
+                                 and old_duration == duration_of(instance.master, service)):
+            # Новая услуга — её длительность у мастера; новый мастер — его длительность, если
+            # длительность не меняли вручную
+            duration = duration_of(master, service) if master is not None else service.duration
         else:
             duration = old_duration
         timing_changed = date != instance.date or start_time != instance.start_time or duration != old_duration
@@ -359,6 +367,9 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
             'master': master, 'service': service, 'date': date, 'start_time': start_time,
             'end_time': end_time, 'status': status_value,
         }
+        if (master_changed or service_changed) and service is not None:
+            # Цена визита — у нового мастера / новой услуги
+            updates['price'] = terms(master, service)[1]
         for field in ('client_name', 'client_email', 'notes'):
             if field in changes:
                 updates[field] = changes[field]
@@ -403,8 +414,17 @@ class StaffServiceSerializer(serializers.ModelSerializer):
         return obj.category.name if obj.category else None
 
 
+class ServiceTermsSerializer(serializers.Serializer):
+    """Своя цена/длительность услуги у мастера (пусто — как у услуги)."""
+    service = serializers.IntegerField()
+    price = serializers.DecimalField(max_digits=8, decimal_places=2, min_value=0, required=False, allow_null=True)
+    duration = serializers.IntegerField(min_value=5, max_value=600, required=False, allow_null=True)
+
+
 class StaffMasterSerializer(serializers.ModelSerializer):
     photo = serializers.SerializerMethodField()
+    # [{service, price, duration}] — только услуги со своей ценой или длительностью
+    service_terms = ServiceTermsSerializer(many=True, required=False, write_only=True)
     services = serializers.PrimaryKeyRelatedField(many=True, queryset=Service.objects.none(), required=False)
     schedule = serializers.SerializerMethodField()
     user = serializers.SerializerMethodField()
@@ -412,7 +432,8 @@ class StaffMasterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Master
-        fields = ['id', 'name', 'description', 'is_active', 'photo', 'services', 'schedule', 'user', 'has_access']
+        fields = ['id', 'name', 'description', 'is_active', 'photo', 'services', 'service_terms', 'schedule', 'user',
+                  'has_access']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -430,9 +451,39 @@ class StaffMasterSerializer(serializers.ModelSerializer):
     def get_has_access(self, obj):
         return obj.user_id is not None
 
+    def validate_service_terms(self, value):
+        company = staff_company(self.context)
+        ids = [item['service'] for item in value]
+        if len(ids) != len(set(ids)):
+            raise serializers.ValidationError('Услуга указана дважды')
+        if Service.objects.filter(company=company, id__in=ids).count() != len(ids):
+            raise serializers.ValidationError('Услуга не найдена')
+        return value
+
+    def save_terms(self, master, items):
+        """Заменяет свои цены и длительности мастера; пустые (как у услуги) не храним."""
+        MasterServiceTerms.objects.filter(master=master).delete()
+        MasterServiceTerms.objects.bulk_create([
+            MasterServiceTerms(master=master, service_id=item['service'], price=item.get('price'),
+                               duration=item.get('duration'))
+            for item in items if item.get('price') is not None or item.get('duration')
+        ])
+
+    def create(self, validated_data):
+        items = validated_data.pop('service_terms', None)
+        instance = super().create(validated_data)
+        if items is not None:
+            self.save_terms(instance, items)
+        return instance
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         data['services'] = sorted(data['services'])
+        data['service_terms'] = [
+            {'service': row.service_id, 'price': str(row.price) if row.price is not None else None,
+             'duration': row.duration}
+            for row in instance.service_terms.order_by('service_id')
+        ]
         staff = self.context.get('staff')
         if not staff or not staff.is_manager:
             # Логин мастера видят только владелец и администраторы
@@ -441,7 +492,10 @@ class StaffMasterSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         services = validated_data.pop('services', None)
+        items = validated_data.pop('service_terms', None)
         instance = super().update(instance, validated_data)
+        if items is not None:
+            self.save_terms(instance, items)
         if services is not None:
             # Заменяем только связи с активными услугами: связи со скрытыми не теряются молча
             hidden = set(instance.services.filter(is_active=False))

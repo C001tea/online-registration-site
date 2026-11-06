@@ -6,6 +6,7 @@ from django.db.models import Count, Sum
 from django.utils import timezone
 
 from bookings.models import Appointment
+from bookings.terms import price_of
 from dashboard.errors import StaffError
 from . import penalties
 from .models import METHOD_CHOICES, CashOperation, Payment, SalaryPayout, SalaryScheme
@@ -42,7 +43,7 @@ def checkout(appointment, *, method, discount, user, pay_penalties=False):
         raise StaffError('Будущий визит нельзя оплатить')
     if hasattr(appointment, 'payment'):
         raise StaffError('Визит уже оплачен')
-    price = money(appointment.service.price if appointment.service else ZERO)
+    price = money(price_of(appointment) if appointment.service else ZERO)
     discount = money(discount)
     if discount < 0 or discount > price:
         raise StaffError('Скидка — от 0 до цены услуги')

@@ -31,6 +31,7 @@ from bookings.models import (
 from bookings.schedule import day_schedule, days_schedule
 from bookings.phone import normalize_phone
 from bookings.slots import ACTIVE_STATUSES, get_free_slots, month_overview, parse_month
+from bookings.terms import duration_of
 from finance import penalties
 from notifications import services as notifications
 from .errors import StaffError
@@ -372,7 +373,7 @@ class FreeTimesView(APIView):
             service = Service.objects.filter(company=staff.company, pk=service_id).first() if service_id else None
             if not service:
                 raise StaffError('Услуга не найдена')
-            duration = service.duration
+            duration = duration_of(master, service)
         else:
             raise StaffError('Укажите услугу (service) или длительность (duration)')
 

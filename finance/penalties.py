@@ -12,6 +12,7 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
+from bookings.terms import price_of
 from .models import CashOperation, Penalty
 
 CENT = Decimal('0.01')
@@ -28,7 +29,7 @@ def amount_for(appointment):
     if not percent or appointment.service is None:
         return Decimal('0')
     # Decimal(str(...)): у только что созданной услуги цена может быть ещё int, а не Decimal
-    return (Decimal(str(appointment.service.price)) * percent / 100).quantize(CENT, rounding=ROUND_HALF_UP)
+    return (Decimal(str(price_of(appointment))) * percent / 100).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def is_late_cancel(appointment, now=None):

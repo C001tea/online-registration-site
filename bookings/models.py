@@ -120,6 +120,8 @@ class Appointment(models.Model):
     client = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
     # Запись создана персоналом в панели салона (а не клиентом онлайн)
     created_by_staff = models.BooleanField(default=False)
+    # Цена услуги на момент записи (у мастера может быть своя цена); пусто — цена услуги
+    price = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     # Секрет ссылки «Управлять записью»: клиент переносит или отменяет запись без входа
     manage_token = models.CharField(max_length=32, unique=True, null=True, blank=True, editable=False)
 
@@ -130,6 +132,20 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"{self.client_name} - {self.date} {self.start_time}"
+
+
+class MasterServiceTerms(models.Model):
+    """Своя цена и/или длительность услуги у мастера (пусто — как у услуги)."""
+    master = models.ForeignKey(Master, on_delete=models.CASCADE, related_name='service_terms')
+    service = models.ForeignKey(Service, on_delete=models.CASCADE, related_name='master_terms')
+    price = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    duration = models.PositiveIntegerField(null=True, blank=True, help_text='duration in minutes')
+
+    class Meta:
+        unique_together = ['master', 'service']
+
+    def __str__(self):
+        return f'{self.master.name} — {self.service.name}'
 
 
 class MasterSchedule(models.Model):

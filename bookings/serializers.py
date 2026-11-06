@@ -4,6 +4,7 @@ from .models import Company, Service, ServiceCategory, Master, Appointment, Revi
 from django.db.models import Avg
 from .phone import normalize_phone
 from .slots import get_free_slots
+from .terms import duration_of, terms
 
 class MasterSerializer(serializers.ModelSerializer):
     reviews_count = serializers.SerializerMethodField()
@@ -22,11 +23,26 @@ class MasterSerializer(serializers.ModelSerializer):
         return round(result, 1) if result else None
 
 class ServiceSerializer(serializers.ModelSerializer):
+    """Услуга для клиента. context['ranges'] — разброс цены и длительности по мастерам («от – до»);
+    context['master'] — цена и длительность именно у этого мастера."""
     category_name = serializers.CharField(source='category.name', read_only=True)
 
     class Meta:
         model = Service
         fields = ['id', 'name', 'category', 'category_name', 'duration', 'price']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        master = self.context.get('master')
+        if master is not None:
+            duration, price = terms(master, instance)
+            data['duration'], data['price'] = duration, str(price)
+            data.update(price_min=str(price), price_max=str(price), duration_min=duration, duration_max=duration)
+        else:
+            data.update(self.context.get('ranges', {}).get(instance.id, {
+                'price_min': data['price'], 'price_max': data['price'],
+                'duration_min': data['duration'], 'duration_max': data['duration']}))
+        return data
 
 
 class CompanySerializer(serializers.ModelSerializer):
@@ -78,12 +94,12 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({'master': 'Мастер не найден.'})
             if not master.services.filter(id=service.id).exists():
                 raise serializers.ValidationError('Мастер не оказывает эту услугу.')
-            if start_time not in get_free_slots(master, date, service.duration):
+            if start_time not in get_free_slots(master, date, duration_of(master, service)):
                 raise serializers.ValidationError('Это время недоступно. Выберите другое.')
         else:
             candidates = company.masters.filter(services=service, is_active=True)
             master = next(
-                (m for m in candidates if start_time in get_free_slots(m, date, service.duration)),
+                (m for m in candidates if start_time in get_free_slots(m, date, duration_of(m, service))),
                 None
             )
             if not master:
