@@ -7,9 +7,12 @@ from django.shortcuts import get_object_or_404
 from .i18n import client_lang
 from .security import TOO_MANY_MESSAGE, client_ip, hit
 from .models import Company, Master, Service, Review, Appointment
-from .serializers import MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer, ReviewSerializer
+from .serializers import (MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer,
+                          ReviewSerializer, VisitCreateSerializer)
+from . import visits
 from .slots import get_free_slots, month_overview, nearest_slots, parse_month, ACTIVE_STATUSES
 from .terms import duration_of, service_ranges, terms
+import uuid
 from datetime import datetime, timedelta
 from django.db.models import Avg, Q
 from django.utils import timezone
@@ -97,6 +100,33 @@ class ServiceListView(APIView):
         return Response(ServiceSerializer(services, many=True, context=context).data)
 
 
+def upcoming_visits(company, phone):
+    """Предстоящие онлайн-визиты номера: визит из нескольких услуг считается одним."""
+    rows = Appointment.objects.filter(
+        company=company, client_phone=phone, status__in=ACTIVE_STATUSES,
+        date__gte=timezone.localdate(), created_by_staff=False,
+    )
+    return rows.filter(visit__isnull=True).count() + rows.exclude(visit__isnull=True).values('visit').distinct().count()
+
+
+def check_phone_limits(company, phone):
+    # Один номер не может занять много времени салона: N предстоящих онлайн-визитов и попыток в час
+    if hit(f'book:phone:{phone}', BOOKINGS_PER_PHONE_HOUR, 3600):
+        raise Throttled(detail={'error': TOO_MANY_MESSAGE})
+    if upcoming_visits(company, phone) >= MAX_UPCOMING_PER_PHONE:
+        raise ValidationError({'non_field_errors': [TOO_MANY_UPCOMING_MESSAGE]})
+
+
+def booking_flood(request, company):
+    """Ответ с ошибкой, если сработала ловушка для ботов или лимит записей с IP / на салон."""
+    if request.data.get('website'):
+        return Response({'error': SPAM_MESSAGE}, status=status.HTTP_400_BAD_REQUEST)
+    if (hit(f'book:ip:{client_ip(request)}', BOOKINGS_PER_IP_HOUR, 3600)
+            or hit(f'book:company:{company.id}', BOOKINGS_PER_SALON_HOUR, 3600)):
+        return Response({'error': TOO_MANY_MESSAGE}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    return None
+
+
 class AppointmentCreateView(generics.CreateAPIView):
     serializer_class = AppointmentCreateSerializer
 
@@ -114,15 +144,7 @@ class AppointmentCreateView(generics.CreateAPIView):
         data = serializer.validated_data
         service = data['service']
         phone = data['client_phone']
-        # Один номер не может занять много времени салона: N предстоящих онлайн-записей и попыток в час
-        if hit(f'book:phone:{phone}', BOOKINGS_PER_PHONE_HOUR, 3600):
-            raise Throttled(detail={'error': TOO_MANY_MESSAGE})
-        upcoming = Appointment.objects.filter(
-            company=self.get_company(), client_phone=phone, status__in=ACTIVE_STATUSES,
-            date__gte=timezone.localdate(), created_by_staff=False,
-        ).count()
-        if upcoming >= MAX_UPCOMING_PER_PHONE:
-            raise ValidationError({'non_field_errors': [TOO_MANY_UPCOMING_MESSAGE]})
+        check_phone_limits(self.get_company(), phone)
 
         # Блокируем мастера, чтобы два одновременных запроса не заняли одно время
         with transaction.atomic():
@@ -148,12 +170,9 @@ class AppointmentCreateView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         # Защита от спама: поле-ловушка (человек его не видит и не заполняет) и лимиты
-        if request.data.get('website'):
-            return Response({'error': SPAM_MESSAGE}, status=status.HTTP_400_BAD_REQUEST)
-        company = self.get_company()
-        if (hit(f'book:ip:{client_ip(request)}', BOOKINGS_PER_IP_HOUR, 3600)
-                or hit(f'book:company:{company.id}', BOOKINGS_PER_SALON_HOUR, 3600)):
-            return Response({'error': TOO_MANY_MESSAGE}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        flood = booking_flood(request, self.get_company())
+        if flood:
+            return flood
         response = super().create(request, *args, **kwargs)
         # Кнопка «Подтвердить в Telegram» на экране после записи
         response.data['telegram_url'] = notifications.client_url(self.appointment)
@@ -345,3 +364,82 @@ class NearestSlotsView(APIView):
                 'slots': [slot.strftime('%H:%M') for slot in nearest[1]] if nearest else [],
             })
         return Response(result)
+
+
+def parse_day(value):
+    try:
+        return datetime.strptime(value or '', '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+class VisitSlotsView(APIView):
+    """Время начала визита из нескольких услуг подряд: ?date=YYYY-MM-DD&items=12,15:3
+    (услуга 12 у любого мастера, затем услуга 15 у мастера 3)."""
+
+    def get(self, request, slug):
+        company = get_object_or_404(Company.public, slug=slug)
+        date = parse_day(request.query_params.get('date'))
+        if not date:
+            return Response({'error': 'Date format: YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            items = visits.parse_items(company, visits.parse_query_items(request.query_params.get('items')))
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        options = visits.Chain(items, date).options()
+        return Response({'date': date.isoformat(), 'slots': [visits.option_data(p) for p in options]})
+
+
+class VisitCreateView(APIView):
+    """Онлайн-запись на несколько услуг подряд одним визитом."""
+
+    def post(self, request, slug):
+        company = get_object_or_404(Company.public, slug=slug)
+        flood = booking_flood(request, company)
+        if flood:
+            return flood
+        serializer = VisitCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            items = visits.parse_items(company, data['items'])
+        except ValueError as exc:
+            raise ValidationError({'items': [str(exc)]})
+        check_phone_limits(company, data['client_phone'])
+
+        start = datetime.combine(data['date'], data['start_time'])
+        client = request.user if request.user.is_authenticated else None
+        visit_id = uuid.uuid4()
+        created = []
+        with transaction.atomic():
+            # Блокируем всех мастеров визита (по порядку id — без взаимных блокировок)
+            ids = sorted({m.id for candidates, _ in items for m in candidates})
+            locked = {m.id: m for m in Master.objects.select_for_update().filter(id__in=ids).order_by('id')}
+            items = [([locked[m.id] for m in candidates], service) for candidates, service in items]
+            parts = visits.Chain(items, data['date']).at(start)
+            if not parts:
+                raise ValidationError({'non_field_errors': ['Это время уже заняли. Выберите другое.']})
+            for part in parts:
+                created.append(Appointment.objects.create(
+                    company=company, master=part['master'], service=part['service'],
+                    client_name=data['client_name'], client_phone=data['client_phone'],
+                    client_email=data.get('client_email', ''), notes=data.get('notes', ''),
+                    date=data['date'], start_time=part['start'].time(), end_time=part['end'].time(),
+                    price=part['price'], status='confirmed' if company.auto_confirm else 'pending',
+                    client=client, lang=client_lang(request), consent_at=timezone.now(),
+                    reminder_minutes=data.get('reminder_minutes'), visit=visit_id,
+                ))
+            for appointment in created:
+                notifications.appointment_created(appointment, request.user)
+        first = created[0]
+        return Response({
+            'id': first.id,
+            'visit': str(visit_id),
+            'date': first.date.isoformat(),
+            'start_time': first.start_time.strftime('%H:%M'),
+            'end_time': created[-1].end_time.strftime('%H:%M'),
+            'parts': [visits.appointment_part(a) for a in created],
+            'status': first.status,
+            'telegram_url': notifications.client_url(first),
+            'manage_token': first.manage_token,
+        }, status=status.HTTP_201_CREATED)

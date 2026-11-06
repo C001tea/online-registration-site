@@ -21,6 +21,7 @@ from .rules import cancel_rule_text, client_can_cancel, starts_at
 from .security import TOO_MANY_MESSAGE, client_ip, hit
 from .slots import ACTIVE_STATUSES, get_free_slots
 from .terms import price_of
+from . import visits
 
 # Запросов по ссылкам управления с одного IP в час (защита от перебора и спама)
 MANAGE_PER_IP_HOUR = 300
@@ -55,6 +56,24 @@ def appointment_data(appointment):
         'can_cancel': client_can_cancel(appointment),
         'can_reschedule': can_reschedule(appointment),
         'late_cancel_penalty': str(fee) if fee else None,
+        # Визит из нескольких услуг подряд: все его части (отмена и перенос — для всего визита)
+        'visit': visit_data(appointment),
+    }
+
+
+def active_parts(appointment):
+    return [p for p in visits.visit_parts(appointment) if p.status in ACTIVE_STATUSES]
+
+
+def visit_data(appointment):
+    if not appointment.visit:
+        return None
+    parts = visits.visit_parts(appointment)
+    active = [p for p in parts if p.status in ACTIVE_STATUSES] or parts
+    return {
+        'start_time': active[0].start_time.strftime('%H:%M'),
+        'end_time': active[-1].end_time.strftime('%H:%M'),
+        'parts': [dict(visits.appointment_part(p), status=p.status) for p in parts],
     }
 
 
@@ -94,14 +113,17 @@ class ManageCancelView(ManageMixin, APIView):
         if not client_can_cancel(appointment):
             return Response({'error': cancel_rule_text(appointment.company, client_lang(request))},
                             status=status.HTTP_400_BAD_REQUEST)
-        late = penalties.is_late_cancel(appointment)
-        appointment.status = 'cancelled'
-        appointment.save(update_fields=['status'])
-        notifications.appointment_cancelled_by_client(appointment)
-        if late:
-            penalty = penalties.create(appointment, 'late_cancel')
-            if penalty:
-                notifications.penalty_created(penalty)
+        parts = active_parts(appointment) if appointment.visit else [appointment]
+        for part in parts:
+            late = penalties.is_late_cancel(part)
+            part.status = 'cancelled'
+            part.save(update_fields=['status'])
+            notifications.appointment_cancelled_by_client(part)
+            if late:
+                penalty = penalties.create(part, 'late_cancel')
+                if penalty:
+                    notifications.penalty_created(penalty)
+        appointment.refresh_from_db()
         return Response(appointment_data(appointment))
 
 
@@ -116,6 +138,12 @@ class ManageSlotsView(ManageMixin, APIView):
             return Response({'error': 'Date format: YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
         if not can_reschedule(appointment) or not appointment.master or not appointment.service:
             return Response({'date': date.isoformat(), 'slots': []})
+        if appointment.visit:
+            parts = active_parts(appointment)
+            if not parts or any(not p.master or not p.service for p in parts):
+                return Response({'date': date.isoformat(), 'slots': []})
+            options = visits.chain_for_reschedule(parts, date).options()
+            return Response({'date': date.isoformat(), 'slots': [p[0]['start'].strftime('%H:%M') for p in options]})
         slots = get_free_slots(appointment.master, date, visit_minutes(appointment), exclude_id=appointment.id)
         return Response({'date': date.isoformat(), 'slots': [s.strftime('%H:%M') for s in slots]})
 
@@ -137,6 +165,8 @@ class ManageRescheduleView(ManageMixin, APIView):
             return error('Запись переносили слишком часто. Позвоните в салон', request,
                          code=status.HTTP_429_TOO_MANY_REQUESTS)
 
+        if appointment.visit:
+            return self.move_visit(request, appointment, date, start)
         before = notifications.snapshot(appointment)
         with transaction.atomic():
             master = Master.objects.select_for_update().get(pk=appointment.master_id)
@@ -148,4 +178,25 @@ class ManageRescheduleView(ManageMixin, APIView):
             appointment.end_time = (datetime.combine(date, start) + timedelta(minutes=duration)).time()
             appointment.save(update_fields=['date', 'start_time', 'end_time'])
         notifications.appointment_rescheduled_by_client(before, appointment)
+        return Response(appointment_data(appointment))
+
+    def move_visit(self, request, appointment, date, start):
+        parts = active_parts(appointment)
+        if not parts or any(not p.master or not p.service for p in parts):
+            return error('Эту запись нельзя перенести', request)
+        befores = [notifications.snapshot(p) for p in parts]
+        with transaction.atomic():
+            ids = sorted({p.master_id for p in parts})
+            list(Master.objects.select_for_update().filter(id__in=ids).order_by('id'))
+            chain = visits.chain_for_reschedule(parts, date).at(datetime.combine(date, start))
+            if not chain:
+                return error('Это время уже заняли. Выберите другое.', request)
+            for part, slot in zip(parts, chain):
+                part.date = date
+                part.start_time = slot['start'].time()
+                part.end_time = slot['end'].time()
+                part.save(update_fields=['date', 'start_time', 'end_time'])
+        for before, part in zip(befores, parts):
+            notifications.appointment_rescheduled_by_client(before, part)
+        appointment.refresh_from_db()
         return Response(appointment_data(appointment))

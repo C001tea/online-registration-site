@@ -115,6 +115,30 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         return data
 
 
+class VisitCreateSerializer(serializers.Serializer):
+    """Визит из нескольких услуг подряд: items — [{service, master?}] по порядку."""
+    items = serializers.ListField(child=serializers.DictField(), min_length=1)
+    date = serializers.DateField()
+    start_time = serializers.TimeField()
+    client_name = serializers.CharField(max_length=100)
+    client_phone = serializers.CharField(max_length=20)
+    client_email = serializers.EmailField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    consent = serializers.BooleanField(required=False)
+    reminder_minutes = serializers.ChoiceField(choices=REMINDER_CHOICES, required=False, allow_null=True)
+
+    def validate_client_phone(self, value):
+        phone = normalize_phone(value)
+        if not phone:
+            raise serializers.ValidationError('Неверный формат номера телефона')
+        return phone
+
+    def validate(self, data):
+        if not data.get('consent'):
+            raise serializers.ValidationError({'consent': ['Нужно согласие на обработку персональных данных']})
+        return data
+
+
 class ReviewSerializer(serializers.ModelSerializer):
     client_name = serializers.SerializerMethodField()
 
