@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'inspect — посмотреть, seed — залить тестовое, cleanup — стереть тестовое'
+        description: 'inspect — посмотреть, seed — наполнить как живой салон (повтор дополняет), cleanup — стереть тестовое'
         type: choice
         options: [inspect, seed, cleanup]
         default: inspect

@@ -1,9 +1,13 @@
+import shutil
+import tempfile
+from datetime import timedelta
 from io import StringIO
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.test import override_settings
 
-from bookings.models import Appointment, Master
+from bookings.models import Appointment, Company, Master, Service, ServiceCategory
 from finance.models import CashOperation, Payment
 from .tests import StaffTestCase
 
@@ -14,8 +18,20 @@ def run(*args):
     return out.getvalue()
 
 
+MEDIA = tempfile.mkdtemp()
+
+
+@override_settings(MEDIA_ROOT=MEDIA, STORAGES={
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+})
 class JcTestDataTests(StaffTestCase):
     """Тестовые данные в настоящем салоне: заливаются, стираются, чужое не трогают."""
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(MEDIA, ignore_errors=True)
 
     def setUp(self):
         super().setUp()
@@ -38,12 +54,39 @@ class JcTestDataTests(StaffTestCase):
         self.master.refresh_from_db()
         self.assertFalse(self.master.is_active)
         tests = Master.objects.filter(company=self.company, description__startswith='[тест]')
-        self.assertEqual(tests.count(), 2)
+        self.assertEqual(tests.count(), 5)
         self.assertTrue(Appointment.objects.filter(master__in=tests, status='completed').exists())
         self.assertTrue(Payment.objects.filter(company=self.company).exists())
         self.assertTrue(CashOperation.objects.filter(company=self.company, comment__startswith='[тест]').exists())
-        with self.assertRaises(CommandError):
-            run('seed', '--slug', 'a', '--yes')  # второй раз — сначала cleanup
+
+    def test_seed_fills_salon_like_a_live_one(self):
+        run('seed', '--slug', 'a', '--yes')
+        tests = Master.objects.filter(company=self.company, description__startswith='[тест]')
+        self.assertTrue(all(m.photo and 'jc-test' in m.photo.name for m in tests))
+        self.assertTrue(all(m.services.exists() for m in tests))
+        self.assertGreaterEqual(Service.objects.filter(company=self.company).count(), 16)
+        self.assertTrue(ServiceCategory.objects.filter(company=self.company, name='Педикюр').exists())
+        company = Company.objects.get(pk=self.company.pk)
+        self.assertIn('jc-test', company.logo.name)
+        self.assertIn('jc-test', company.main_photo.name)
+        # Журнал заполнен на две недели вперёд
+        ahead = Appointment.objects.filter(master__in=tests, date__gt=self.today + timedelta(days=10))
+        self.assertTrue(ahead.exists())
+        self.assertFalse(Appointment.objects.filter(master__in=tests, date__gt=self.today + timedelta(days=14)).exists())
+        # Повторный запуск только дополняет: не дублирует мастеров, услуги, записи и кассу
+        counts = (tests.count(), Service.objects.count(), Appointment.objects.count(), CashOperation.objects.count())
+        run('seed', '--slug', 'a', '--yes')
+        self.assertEqual(counts, (tests.count(), Service.objects.count(), Appointment.objects.count(),
+                                  CashOperation.objects.count()))
+
+    def test_seed_upgrades_old_test_masters(self):
+        old = Master.objects.create(company=self.company, name='Алина (тест)', description='[тест] тестовый мастер')
+        run('seed', '--slug', 'a', '--yes')
+        old.refresh_from_db()
+        self.assertEqual(old.name, 'Алина')
+        self.assertIn('маникюр', old.description)
+        self.assertTrue(old.photo)
+        self.assertEqual(Master.objects.filter(company=self.company, name__startswith='Алина').count(), 1)
 
     def test_cleanup_removes_only_test_data(self):
         run('seed', '--slug', 'a', '--hide', 'Моисей', '--yes')
@@ -55,6 +98,11 @@ class JcTestDataTests(StaffTestCase):
         self.assertFalse(CashOperation.objects.filter(company=self.company).exists())
         self.assertTrue(Appointment.objects.filter(pk=self.real.pk).exists())  # запись «живая» осталась
         self.assertTrue(Appointment.objects.filter(pk=self.other.pk).exists())  # чужой салон не тронут
+        self.assertFalse(Service.objects.filter(company=self.company, name='Педикюр классический').exists())
+        self.assertTrue(Service.objects.filter(pk=self.service.pk).exists())  # свои услуги салона остались
+        company = Company.objects.get(pk=self.company.pk)
+        self.assertFalse(company.logo)
+        self.assertFalse(company.main_photo)
         self.master.refresh_from_db()
         self.assertFalse(self.master.is_active)  # скрытый остаётся скрытым без --unhide
 
