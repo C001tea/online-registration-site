@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from django.utils import timezone
 from .models import Appointment
 from .schedule import day_schedule, days_schedule
@@ -61,9 +61,17 @@ def get_free_slots(master, date, duration_minutes, exclude_id=None, step=SLOT_ST
     appointments = Appointment.objects.filter(master=master, date=date, status__in=BUSY_STATUSES)
     if exclude_id is not None:
         appointments = appointments.exclude(pk=exclude_id)
-    busy = list(appointments.values_list('start_time', 'end_time'))
+    busy = [(s, busy_end(e, b)) for s, e, b in appointments.values_list('start_time', 'end_time', 'buffer_minutes')]
     now = local_now() if date == today and not include_past else None
     return free_starts(date, schedule, busy, duration_minutes, step, now)
+
+
+def busy_end(end, buffer_minutes):
+    """Конец занятости мастера: конец записи плюс технический перерыв (не позже 23:59)."""
+    if not buffer_minutes:
+        return end
+    minutes = min(end.hour * 60 + end.minute + buffer_minutes, 23 * 60 + 59)
+    return time(minutes // 60, minutes % 60)
 
 
 def busy_by_master_day(masters, date_from, date_to):
@@ -71,9 +79,9 @@ def busy_by_master_day(masters, date_from, date_to):
     result = defaultdict(list)
     rows = Appointment.objects.filter(
         master__in=masters, date__gte=date_from, date__lte=date_to, status__in=BUSY_STATUSES,
-    ).values_list('master_id', 'date', 'start_time', 'end_time')
-    for master_id, day, start, end in rows:
-        result[(master_id, day)].append((start, end))
+    ).values_list('master_id', 'date', 'start_time', 'end_time', 'buffer_minutes')
+    for master_id, day, start, end, buffer in rows:
+        result[(master_id, day)].append((start, busy_end(end, buffer)))
     return result
 
 

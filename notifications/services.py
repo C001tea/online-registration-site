@@ -7,6 +7,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from bookings import audit
 from bookings.i18n import tr
 from bookings.models import AdminProfile, Appointment
 from bookings.rules import cancel_rule_text, client_can_cancel
@@ -79,6 +80,7 @@ def notify_staff(appointment, text):
 
 def appointment_created(appointment, user=None):
     """Онлайн-запись клиента: ссылка на бота, сообщение клиенту (если Telegram уже привязан), салону."""
+    audit.log(appointment, 'created', actor='client')
     link = AppointmentTelegram.objects.create(appointment=appointment)
     if user is not None and user.is_authenticated:
         client_chat = ClientTelegram.objects.filter(user=user).first()
@@ -133,6 +135,7 @@ def penalty_created(penalty):
 
 
 def appointment_cancelled_by_client(appointment):
+    audit.log(appointment, 'cancelled_by_client', actor='client')
     notify_staff(appointment, texts.staff_cancelled(appointment))
 
 
@@ -153,6 +156,9 @@ def appointment_changed_by_staff(before, appointment):
 
 def appointment_rescheduled_by_client(before, appointment):
     """Клиент перенёс запись по ссылке: салону — сообщение, клиенту — новое время, напоминания заново."""
+    audit.log(appointment, 'rescheduled_by_client', actor='client', details={
+        'date': [before['date'].isoformat(), appointment.date.isoformat()],
+        'start_time': [before['start_time'].strftime('%H:%M'), appointment.start_time.strftime('%H:%M')]})
     notify_staff(appointment, texts.staff_rescheduled(before, appointment))
     link = AppointmentTelegram.objects.filter(appointment=appointment).first()
     if link:
@@ -285,6 +291,7 @@ def apply_action(action, link_id, chat_id, message_id):
         elif action == 'ok' and appointment.status == 'pending':
             appointment.status = 'confirmed'
             appointment.save(update_fields=['status'])
+            audit.log(appointment, 'confirmed_by_client', actor='client')
             link.appointment.status = 'confirmed'
             popup = tr('Спасибо, ждём вас!', lang)
         elif action == 'cy':
