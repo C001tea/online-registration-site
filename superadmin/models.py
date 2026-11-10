@@ -70,6 +70,32 @@ class HealthMark(models.Model):
         return f'{self.key}: {"ok" if self.ok else "сбой"} {self.at:%Y-%m-%d %H:%M}'
 
 
+class SuperAdminTelegram(models.Model):
+    """Чат супер-админа для тревог и событий платформы."""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='super_telegram')
+    chat_id = models.BigIntegerField()
+    linked_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Telegram супер-админа'
+        verbose_name_plural = 'Telegram супер-админов'
+
+
+class AlertState(models.Model):
+    """Открытая тревога: о ней уже написали; закроется сообщением «восстановлено»."""
+    key = models.CharField(max_length=40, unique=True)
+    text = models.CharField(max_length=300)
+    since = models.DateTimeField()
+    notified_at = models.DateTimeField()
+
+    class Meta:
+        verbose_name = 'Открытая тревога'
+        verbose_name_plural = 'Открытые тревоги'
+
+    def __str__(self):
+        return self.text
+
+
 def mark(key, ok=True, **details):
     """Записать отметку состояния (одна строка на ключ)."""
     from django.utils import timezone
