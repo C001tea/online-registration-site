@@ -114,6 +114,19 @@ class SlugCheckView(APIView):
                          'suggestion': suggest_slug(slug) if taken else None})
 
 
+# Понятные тексты вместо стандартных Django («слишком похож на имя пользователя» и т.п.)
+PASSWORD_HINTS = {
+    'password_too_similar': 'Пароль слишком похож на email — придумайте другой',
+    'password_too_common': 'Этот пароль слишком простой и часто встречается — придумайте другой',
+    'password_too_short': 'Пароль должен быть не короче 8 символов',
+    'password_entirely_numeric': 'Пароль не может состоять только из цифр',
+}
+
+
+def password_problems(exc):
+    return [PASSWORD_HINTS.get(error.code, message) for error, message in zip(exc.error_list, exc.messages)]
+
+
 class SignupSerializer(serializers.Serializer):
     salon_name = serializers.CharField(max_length=200)
     slug = serializers.CharField(max_length=30)
@@ -158,7 +171,7 @@ class SignupSerializer(serializers.Serializer):
         try:
             validate_password(attrs['password'], User(username=attrs.get('email', ''), email=attrs.get('email', '')))
         except DjangoValidationError as exc:
-            raise serializers.ValidationError({'password': list(exc.messages)})
+            raise serializers.ValidationError({'password': password_problems(exc)})
         return attrs
 
 

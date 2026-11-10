@@ -32,6 +32,12 @@ class SignupTests(TestCase):
     def signup(self, ip='10.0.0.1', **changes):
         return self.api.post('/api/staff/signup/', {**SIGNUP, **changes}, format='json', HTTP_X_REAL_IP=ip)
 
+    def test_password_problems_in_plain_words(self):
+        response = self.signup(email='lavanda@example.com', password='Lavanda-2026')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['password'], ['Пароль слишком похож на email — придумайте другой'])
+        self.assertIn('только из цифр', str(self.signup(password='12345678901').data['password']))
+
     def test_closed_without_flag(self):
         with override_settings(SIGNUP_ENABLED=False):
             self.assertEqual(self.signup().status_code, 403)
@@ -58,6 +64,7 @@ class SignupTests(TestCase):
         self.assertAlmostEqual(company.trial_ends_at, timezone.now() + timedelta(days=14), delta=timedelta(minutes=1))
         self.assertIsNotNone(company.terms_accepted_at)
         self.assertEqual(company.phone, '+37369123456')
+        self.assertEqual(company.penalty_percent, 0)  # штрафы владелец включает сам
         owner = User.objects.get(username='owner@example.com')
         self.assertEqual((owner.email, AdminProfile.objects.get(user=owner).role), ('owner@example.com', 'owner'))
         me = response.data['me']
