@@ -85,6 +85,8 @@ def create_salon(*, name, slug, owner_login, password, email='', address='', pho
             status=Company.STATUS_PENDING if pending else Company.STATUS_ACTIVE,
             trial_ends_at=now + timedelta(days=settings.TRIAL_DAYS) if pending else None,
             terms_accepted_at=now if pending else None,
+            # Самостоятельная регистрация — без штрафов за неявку, пока владелец сам их не включит
+            **({'penalty_percent': 0} if pending else {}),
         )
         user = User.objects.create_user(owner_login, email=email, password=password, first_name='Владелец')
         AdminProfile.objects.create(user=user, company=company, role='owner')
