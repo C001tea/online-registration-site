@@ -3,6 +3,7 @@ import json
 import logging
 
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,7 +11,7 @@ from rest_framework.views import APIView
 from bookings.auth_views import get_token_for_user
 from bookings.i18n import client_lang
 from bookings.security import client_ip, hit
-from dashboard.permissions import IsStaff
+from dashboard.permissions import IMPERSONATION_FORBIDDEN_MESSAGE, IsStaff, is_impersonation
 from . import login, services, telegram
 from .models import StaffTelegram
 
@@ -46,12 +47,16 @@ class StaffTelegramView(APIView):
         })
 
     def post(self, request):
+        if is_impersonation(request):
+            raise PermissionDenied({'error': IMPERSONATION_FORBIDDEN_MESSAGE})
         url = services.staff_link_url(request.user) if telegram.enabled() else None
         if not url:
             return Response({'error': 'Telegram-бот пока не настроен'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({'url': url})
 
     def delete(self, request):
+        if is_impersonation(request):
+            raise PermissionDenied({'error': IMPERSONATION_FORBIDDEN_MESSAGE})
         StaffTelegram.objects.filter(user=request.user).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

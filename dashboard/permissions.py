@@ -5,7 +5,9 @@ from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 from bookings.models import AdminProfile, Company, Master
-from .tokens import STAFF_SCOPE, token_matches_password
+from django.contrib.auth.models import User
+
+from .tokens import IMPERSONATION_CLAIM, STAFF_SCOPE, token_matches_password
 
 MANAGER_ROLES = ('owner', 'admin')
 
@@ -13,6 +15,13 @@ NO_STAFF_TOKEN_MESSAGE = 'Нужен вход в панель салона'
 NO_STAFF_ACCESS_MESSAGE = 'У этого аккаунта нет доступа к панели салона'
 NOT_ENOUGH_RIGHTS_MESSAGE = 'Недостаточно прав'
 SESSION_EXPIRED_MESSAGE = 'Сессия устарела, войдите снова'
+BLOCKED_MESSAGE = 'Салон заблокирован. Напишите в поддержку TimePoint'
+IMPERSONATION_FORBIDDEN_MESSAGE = 'Недоступно при входе от имени салона'
+
+
+def is_impersonation(request):
+    """Запрос от супер-админа, вошедшего в панель салона от имени владельца."""
+    return bool(request.auth is not None and request.auth.get(IMPERSONATION_CLAIM) is not None)
 
 
 @dataclass(frozen=True)
@@ -55,9 +64,16 @@ class IsStaff(BasePermission):
         if not token_matches_password(request.auth, request.user):
             # Пароль сменили или сбросили после выдачи токена → 401, фронт выходит из панели
             raise AuthenticationFailed({'error': SESSION_EXPIRED_MESSAGE})
+        superuser_id = request.auth.get(IMPERSONATION_CLAIM)
+        if superuser_id is not None and not User.objects.filter(
+                pk=superuser_id, is_active=True, is_superuser=True).exists():
+            # Супер-админа отключили — его вход в салон тоже закрывается
+            raise AuthenticationFailed({'error': SESSION_EXPIRED_MESSAGE})
         staff = get_staff(request.user)
         if staff is None:
             raise PermissionDenied({'error': NO_STAFF_ACCESS_MESSAGE})
+        if staff.company.status == Company.STATUS_BLOCKED:
+            raise PermissionDenied({'error': BLOCKED_MESSAGE})
         request.staff = staff
         return True
 

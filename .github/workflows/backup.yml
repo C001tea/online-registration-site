@@ -70,3 +70,16 @@ jobs:
           path: ${{ env.NAME }}.gpg
           retention-days: 30
           if-no-files-found: error
+
+      # Отметка для супер-админки («Техническое состояние»): дата последнего бэкапа и его результат
+      - name: Отметка в супер-админке
+        if: always()
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          STATUS: ${{ job.status }}
+        run: |
+          FLAG=""; [ "$STATUS" = success ] || FLAG="--fail"
+          SIZE=$(stat -c %s "$NAME.gpg" 2>/dev/null || echo 0)
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new "$USER@$HOST" \
+            "cd online-registration-site && docker compose exec -T web python manage.py health_mark backup $FLAG --detail size=$SIZE" || true

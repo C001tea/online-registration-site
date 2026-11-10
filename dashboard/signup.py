@@ -248,16 +248,22 @@ class PasswordResetView(APIView):
             for user in User.objects.filter(email__iexact=email, is_active=True):
                 # Только персонал салона: клиенты сайта восстанавливают вход через Telegram
                 if user.has_usable_password() and is_staff_user(user):
-                    uid = urlsafe_base64_encode(force_bytes(user.pk))
-                    token = default_token_generator.make_token(user)
-                    link = f'{settings.PANEL_URL}/admin-panel/reset-password?uid={uid}&token={token}'
-                    send('Сброс пароля — TimePoint',
-                         f'Здравствуйте!\n\nКто-то (надеемся, вы) запросил сброс пароля для входа в панель салона '
-                         f'(логин {user.username}). Новый пароль можно задать по ссылке:\n\n{link}\n\n'
-                         f'Ссылка действует 2 часа и сработает один раз. Если вы не запрашивали сброс — '
-                         f'ничего не делайте, пароль останется прежним.\n\nTimePoint',
-                         user.email)
+                    send_password_reset(user)
         return Response({'message': RESET_SENT_MESSAGE})
+
+
+def send_password_reset(user, by_support=False):
+    """Письмо со ссылкой на новый пароль (2 часа, один раз). by_support — отправила поддержка TimePoint."""
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    link = f'{settings.PANEL_URL}/admin-panel/reset-password?uid={uid}&token={token}'
+    who = 'Поддержка TimePoint отправила вам' if by_support else 'Кто-то (надеемся, вы) запросил'
+    return send('Сброс пароля — TimePoint',
+                f'Здравствуйте!\n\n{who} ссылку для сброса пароля входа в панель салона '
+                f'(логин {user.username}). Новый пароль можно задать по ссылке:\n\n{link}\n\n'
+                f'Ссылка действует 2 часа и сработает один раз. Если сброс не нужен — '
+                f'ничего не делайте, пароль останется прежним.\n\nTimePoint',
+                user.email)
 
 
 def is_staff_user(user):
