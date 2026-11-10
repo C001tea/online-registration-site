@@ -1,0 +1,61 @@
+# Учётная запись супер-админки (/superadmin на сайте).
+# Actions → Superadmin → Run workflow:
+#   status   — есть ли суперпользователи и подключено ли приложение-аутентификатор (секреты не показываются);
+#   password — создать суперпользователя с этим логином или задать ему пароль из секрета SUPERADMIN_PASSWORD
+#              (Settings → Secrets and variables → Actions; передаётся через stdin, в лог не попадает);
+#   reset-totp — потерян телефон с приложением: при следующем входе снова покажется QR-код.
+name: Superadmin
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'status — посмотреть, password — задать пароль, reset-totp — сбросить код из приложения'
+        type: choice
+        options: [status, password, reset-totp]
+        default: status
+      username:
+        description: 'логин суперпользователя (для password и reset-totp)'
+        required: false
+        default: ''
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH-доступ
+        env:
+          KEY: ${{ secrets.NEW_SERVER_SSH_KEY }}
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_server
+          chmod 600 ~/.ssh/id_server
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Выполнить
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          ACTION: ${{ inputs.action }}
+          LOGIN: ${{ inputs.username }}
+          PASSWORD: ${{ secrets.SUPERADMIN_PASSWORD }}
+        run: |
+          RUN="cd online-registration-site && docker compose exec -T web python manage.py superadmin"
+          case "$ACTION" in
+            status)
+              ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "$RUN --status"
+              exit 0 ;;
+            password|reset-totp) ;;
+            *) echo "::error::Неизвестное действие"; exit 1 ;;
+          esac
+          case "$LOGIN" in *[!A-Za-z0-9_.@+-]*|"") echo "::error::Укажите логин (латиница, цифры, _.@+-)"; exit 1 ;; esac
+          if [ "$ACTION" = reset-totp ]; then
+            ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "$RUN --username '$LOGIN' --reset-totp"
+            exit 0
+          fi
+          if [ -z "$PASSWORD" ]; then
+            echo "::error::Не задан секрет SUPERADMIN_PASSWORD (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+          printf '%s\n' "$PASSWORD" | ssh -i ~/.ssh/id_server "$SSH_USER@$HOST" "$RUN --username '$LOGIN' --password-stdin"

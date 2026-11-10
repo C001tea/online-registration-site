@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'dashboard',
     'notifications',
     'finance',
+    'superadmin',
 ]
 
 MIDDLEWARE = [
