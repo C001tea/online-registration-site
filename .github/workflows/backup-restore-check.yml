@@ -28,3 +28,15 @@ jobs:
           SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
         run: |
           ssh -i ~/.ssh/id_server -o StrictHostKeyChecking=accept-new "$SSH_USER@$HOST" 'bash -s' < deploy/restore-check.sh
+
+      # Отметка для супер-админки («Техническое состояние»)
+      - name: Отметка в супер-админке
+        if: always()
+        env:
+          HOST: ${{ secrets.NEW_SERVER_HOST }}
+          SSH_USER: ${{ secrets.NEW_SERVER_USER || 'ubuntu' }}
+          STATUS: ${{ job.status }}
+        run: |
+          FLAG=""; [ "$STATUS" = success ] || FLAG="--fail"
+          ssh -i ~/.ssh/id_server -o StrictHostKeyChecking=accept-new "$SSH_USER@$HOST" \
+            "cd online-registration-site && docker compose exec -T web python manage.py health_mark restore_check $FLAG" || true

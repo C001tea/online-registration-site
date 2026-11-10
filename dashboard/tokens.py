@@ -44,6 +44,24 @@ class StaffRefreshToken(RefreshToken):
         return token
 
 
+# Вход супер-админа в панель салона от имени владельца: только access на 1 час, без refresh.
+# Claim imp — id суперпользователя (проверяется на каждый запрос в IsStaff), imp_name — его логин.
+IMPERSONATION_CLAIM = 'imp'
+
+
+class ImpersonationAccessToken(AccessToken):
+    lifetime = timedelta(hours=1)
+
+
+def get_impersonation_token(user, superuser):
+    token = ImpersonationAccessToken.for_user(user)
+    token['scope'] = STAFF_SCOPE
+    token[PASSWORD_CLAIM] = password_fingerprint(user)
+    token[IMPERSONATION_CLAIM] = superuser.pk
+    token['imp_name'] = superuser.username
+    return token
+
+
 def get_staff_tokens(user):
     refresh = StaffRefreshToken.for_user(user)
     return {

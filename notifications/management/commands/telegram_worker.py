@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand
 from django.db import close_old_connections
 
 from notifications import email, services, telegram
+from superadmin.models import mark as health_mark
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ class Command(BaseCommand):
                         services.cleanup()
                     # Письма клиентам без Telegram: подтверждение и напоминание
                     email.process()
+                    # Отметка для супер-админки: воркер жив (раз в минуту)
+                    health_mark('worker', telegram=telegram.enabled(), email=email.enabled())
             except Exception:
                 logger.exception('telegram worker iteration failed')
             time.sleep(SEND_INTERVAL)

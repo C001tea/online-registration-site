@@ -11,7 +11,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -25,7 +25,7 @@ from bookings.login_limit import (
     register_login_failure, reset_login_failures,
 )
 from bookings.models import (
-    AdminProfile, Appointment, ClientProfile, Master, MasterDayOff, MasterSchedule, MasterWorkDay, Service,
+    AdminProfile, Appointment, ClientProfile, Company, Master, MasterDayOff, MasterSchedule, MasterWorkDay, Service,
     ServiceCategory,
 )
 from bookings.schedule import day_schedule, days_schedule
@@ -37,7 +37,10 @@ from notifications import services as notifications
 from bookings import audit
 from .errors import StaffError
 from .visit_card import AppointmentCardActions
-from .permissions import IsStaff, IsStaffManager, IsStaffManagerOrReadOnly, get_staff, NOT_ENOUGH_RIGHTS_MESSAGE
+from .permissions import (
+    BLOCKED_MESSAGE, IMPERSONATION_FORBIDDEN_MESSAGE, IsStaff, IsStaffManager, IsStaffManagerOrReadOnly, get_staff,
+    NOT_ENOUGH_RIGHTS_MESSAGE, is_impersonation,
+)
 from .photos import replace_photo, uploaded_file
 from .serializers import (
     PHONE_REGION, DAY_NAMES,
@@ -152,7 +155,10 @@ class StaffLoginView(APIView):
             register_login_failure(limit_key)
             return Response({'error': LOGIN_FAILED_MESSAGE}, status=status.HTTP_400_BAD_REQUEST)
 
+        if staff.company.status == Company.STATUS_BLOCKED:
+            return Response({'error': BLOCKED_MESSAGE}, status=status.HTTP_403_FORBIDDEN)
         reset_login_failures(limit_key)
+        User.objects.filter(pk=user.pk).update(last_login=timezone.now())
         return Response({**get_staff_tokens(user), 'me': staff_me(user, staff)})
 
 
@@ -170,9 +176,12 @@ class StaffTokenRefreshSerializer(TokenRefreshSerializer):
             # Пароль сменили или сбросили после выдачи токена
             raise InvalidToken('Пароль изменён — войдите снова')
         try:
-            return super().validate(attrs)
+            data = super().validate(attrs)
         except User.DoesNotExist:
             raise InvalidToken('Пользователь не найден')
+        # Последняя активность салона (супер-админка): вход или продление сессии
+        User.objects.filter(pk=user.pk).update(last_login=timezone.now())
+        return data
 
 
 class StaffTokenRefreshView(TokenRefreshView):
@@ -184,6 +193,8 @@ class StaffPasswordView(APIView):
     permission_classes = [IsStaff]
 
     def post(self, request):
+        if is_impersonation(request):
+            raise PermissionDenied({'error': IMPERSONATION_FORBIDDEN_MESSAGE})
         serializer = PasswordChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = request.user
@@ -208,7 +219,10 @@ class StaffMeView(APIView):
     permission_classes = [IsStaff]
 
     def get(self, request):
-        return Response(staff_me(request.user, request.staff))
+        data = staff_me(request.user, request.staff)
+        if is_impersonation(request):
+            data['impersonated_by'] = request.auth.get('imp_name') or 'support'
+        return Response(data)
 
 
 # --- Журнал записей ---
