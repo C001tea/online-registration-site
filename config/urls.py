@@ -34,4 +34,6 @@ urlpatterns = [
     # API панели салона (персонал: владелец, администраторы, мастера)
     path('api/staff/', include('dashboard.urls')),
     path('api/telegram/', include('notifications.urls')),
+    # Супер-админка платформы (только суперпользователь, вход с кодом из приложения)
+    path('api/super/', include('superadmin.urls')),
 ]
