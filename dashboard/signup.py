@@ -28,6 +28,7 @@ from bookings.models import AdminProfile, Company, MasterSchedule, MasterWorkDay
 from bookings.phone import normalize_phone
 from bookings.security import TOO_MANY_MESSAGE, client_ip, hit
 from notifications.models import StaffTelegram
+from superadmin import alerts
 from .errors import StaffError
 from .permissions import IsStaff, IsStaffManager, get_staff
 from .salons import clean_name, create_salon, login_taken, slug_error, slugify_name, suggest_slug
@@ -182,6 +183,7 @@ class SignupView(APIView):
             password=data['password'], phone=data.get('phone', ''), pending=True,
         )
         email_sent = send_verification(user, company)
+        alerts.salon_signed_up(company, user)
         return Response({**get_staff_tokens(user), 'me': staff_me(user, get_staff(user)),
                          'email_sent': email_sent}, status=status.HTTP_201_CREATED)
 
@@ -207,6 +209,7 @@ class VerifyEmailView(APIView):
         if company.status == Company.STATUS_PENDING:
             company.status = Company.STATUS_ACTIVE
             company.save(update_fields=['status'])
+            alerts.salon_verified(company)
         elif company.status == Company.STATUS_BLOCKED:
             raise StaffError('Салон заблокирован. Напишите в поддержку', status.HTTP_403_FORBIDDEN)
         return Response({'verified': True, 'slug': company.slug, 'public_url': public_url(company)})

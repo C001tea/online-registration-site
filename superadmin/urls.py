@@ -1,6 +1,6 @@
 from django.urls import path, re_path
 
-from . import health, salons, views
+from . import alerts, health, salons, views
 
 urlpatterns = [
     path('auth/login/', views.LoginView.as_view(), name='super-login'),
@@ -9,6 +9,8 @@ urlpatterns = [
     path('me/', views.MeView.as_view(), name='super-me'),
     path('log/', views.LogView.as_view(), name='super-log'),
     path('health/', health.HealthView.as_view(), name='super-health'),
+    path('telegram/', alerts.TelegramView.as_view(), name='super-telegram'),
+    path('telegram/test/', alerts.TelegramTestView.as_view(), name='super-telegram-test'),
     path('overview/', salons.OverviewView.as_view(), name='super-overview'),
     path('salons/', salons.SalonListView.as_view(), name='super-salons'),
     path('salons/<int:pk>/', salons.SalonDetailView.as_view(), name='super-salon'),

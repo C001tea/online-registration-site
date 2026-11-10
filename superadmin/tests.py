@@ -65,15 +65,18 @@ class SuperLoginTests(TestCase):
         self.assertIn('login', actions)
 
     def test_second_login_requires_code_and_rejects_replay(self):
-        secret, _ = self.setup_totp()
-        second = self.login().data
-        self.assertEqual(second['step'], 'code')
-        self.assertNotIn('secret', second)
-        # Тот же код, что при настройке, второй раз не принимается
-        same = totp.code_at(secret, totp.current_step())
-        self.assertEqual(self.verify(second['ticket'], same).status_code, 400)
-        with mock.patch('superadmin.totp.time.time', return_value=(totp.current_step() + 1) * 30 + 1):
-            fresh = totp.code_at(secret, totp.current_step())
+        # Время заморожено: иначе на медленной машине 30-секундный шаг кода может смениться посреди теста
+        step = totp.current_step()
+        with mock.patch('superadmin.totp.time.time', return_value=step * 30 + 1):
+            secret, _ = self.setup_totp()
+            second = self.login().data
+            self.assertEqual(second['step'], 'code')
+            self.assertNotIn('secret', second)
+            # Тот же код, что при настройке, второй раз не принимается
+            same = totp.code_at(secret, step)
+            self.assertEqual(self.verify(second['ticket'], same).status_code, 400)
+        with mock.patch('superadmin.totp.time.time', return_value=(step + 1) * 30 + 1):
+            fresh = totp.code_at(secret, step + 1)
             self.assertEqual(self.verify(second['ticket'], fresh).status_code, 200)
 
     def test_backup_code_works_once(self):

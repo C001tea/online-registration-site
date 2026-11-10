@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import generics, status
 from rest_framework.exceptions import Throttled, ValidationError
 from rest_framework.response import Response
@@ -28,6 +30,15 @@ SPAM_MESSAGE = 'Не удалось отправить запись. Обнов�
 TOO_MANY_UPCOMING_MESSAGE = 'У вас уже есть 3 предстоящие записи в этом салоне. Чтобы записаться ещё, позвоните в салон'
 
 
+def run_alerts():
+    """Тревоги супер-админу (не чаще раза в минуту на всю платформу); сбой не ломает проверку."""
+    try:
+        from superadmin import alerts
+        alerts.run()
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception('alerts check failed')
+
+
 class HealthView(APIView):
     """Проверка для мониторинга: приложение отвечает и база доступна."""
     authentication_classes = []
@@ -38,6 +49,7 @@ class HealthView(APIView):
                 cursor.execute('SELECT 1')
         except DatabaseError:
             return Response({'status': 'error', 'database': 'unavailable'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        run_alerts()
         if request.query_params.get('ip') == '1':
             # Диагностика лимитов: каким IP сервер видит этого посетителя (его собственный адрес)
             return Response({'status': 'ok', 'ip': client_ip(request)})

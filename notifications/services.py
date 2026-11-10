@@ -219,6 +219,10 @@ def handle_update(update):
         if payload.startswith('s_'):
             link_staff(chat_id, payload[2:])
             return
+        if payload.startswith('x_'):
+            from superadmin.alerts import link_chat
+            link_chat(chat_id, payload[2:])
+            return
     reply(chat_id, texts.GREETING)
 
 
