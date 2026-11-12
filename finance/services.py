@@ -1,7 +1,7 @@
 """Расчёты финансов салона: оплата визита, отчёт за период, касса за день, зарплаты."""
 from decimal import ROUND_HALF_UP, Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Sum
 from django.utils import timezone
 
@@ -16,8 +16,11 @@ CENT = Decimal('0.01')
 METHODS = [key for key, _ in METHOD_CHOICES]
 SALARY_CATEGORY = 'Зарплата'
 # Подсказки в форме расхода/прихода (можно вписать свою категорию)
-EXPENSE_CATEGORIES = ['Аренда', 'Материалы', 'Коммунальные услуги', 'Реклама', 'Оборудование', 'Налоги', 'Прочее']
+EXPENSE_CATEGORIES = ['Аренда', 'Материалы', 'Коммунальные услуги', 'Реклама', 'Оборудование', 'Налоги',
+                      'Изъятие из кассы', 'Прочее']
 INCOME_CATEGORIES = ['Продажа товаров', 'Внесение в кассу', 'Прочее']
+# Перемещение денег (владелец положил или забрал наличные): видно в кассе, но это не доход и не расход
+CASH_MOVES = ['Внесение в кассу', 'Изъятие из кассы']
 
 
 def money(value):
@@ -47,19 +50,30 @@ def checkout(appointment, *, method, discount, user, pay_penalties=False):
     discount = money(discount)
     if discount < 0 or discount > price:
         raise StaffError('Скидка — от 0 до цены услуги')
-    with transaction.atomic():
-        payment = Payment.objects.create(
-            company=appointment.company, appointment=appointment, master=appointment.master,
-            date=appointment.date, price=price, discount=discount, amount=price - discount,
-            method=method, created_by=user,
-        )
-        if appointment.status != 'completed':
-            appointment.status = 'completed'
-            appointment.save(update_fields=['status'])
-        payment.penalties_paid = Decimal('0')
-        if pay_penalties:
-            debts = penalties.unpaid(appointment.company, appointment.client_phone).exclude(appointment=appointment)
-            payment.penalties_paid = penalties.pay(debts, method=method, user=user, day=appointment.date)
+    try:
+        with transaction.atomic():
+            # Двойное нажатие «Оплатить»: второй запрос ждёт первый и видит, что визит уже оплачен
+            Appointment.objects.select_for_update().filter(pk=appointment.pk).first()
+            if Payment.objects.filter(appointment=appointment).exists():
+                raise StaffError('Визит уже оплачен')
+            payment = Payment.objects.create(
+                company=appointment.company, appointment=appointment, master=appointment.master,
+                date=appointment.date, price=price, discount=discount, amount=price - discount,
+                method=method, created_by=user,
+            )
+            if appointment.status != 'completed':
+                if appointment.status == 'no_show':
+                    # Клиент всё-таки пришёл и оплатил — неоплаченный штраф за неявку снимаем
+                    penalties.remove_unpaid(appointment)
+                appointment.status = 'completed'
+                appointment.save(update_fields=['status'])
+            payment.penalties_paid = Decimal('0')
+            if pay_penalties:
+                debts = penalties.unpaid(appointment.company, appointment.client_phone).exclude(appointment=appointment)
+                # Деньги за штрафы получены сегодня — в кассу сегодняшнего дня
+                payment.penalties_paid = penalties.pay(debts, method=method, user=user, day=timezone.localdate())
+    except IntegrityError:
+        raise StaffError('Визит уже оплачен')
     return payment
 
 
@@ -67,7 +81,8 @@ def checkout(appointment, *, method, discount, user, pay_penalties=False):
 
 def summary(company, date_from, date_to):
     payments = Payment.objects.filter(company=company, date__gte=date_from, date__lte=date_to)
-    operations = CashOperation.objects.filter(company=company, date__gte=date_from, date__lte=date_to)
+    operations = (CashOperation.objects.filter(company=company, date__gte=date_from, date__lte=date_to)
+                  .exclude(category__in=CASH_MOVES))
     revenue = total(payments)
     incomes = total(operations.filter(kind='income'))
     expenses_qs = operations.filter(kind='expense')
@@ -110,16 +125,18 @@ def summary(company, date_from, date_to):
 
 
 # --- Касса за день ---
+# Касса — по дню, когда деньги получены (вчерашний визит, оплаченный сегодня, — в сегодняшней кассе).
+# Отчёт и зарплаты — по дате визита.
 
 def cash_balance_before(company, day):
     """Наличные в кассе на начало дня: все наличные оплаты и приходы минус расходы до этой даты."""
-    payments = total(Payment.objects.filter(company=company, method='cash', date__lt=day))
+    payments = total(Payment.objects.filter(company=company, method='cash', created_at__date__lt=day))
     ops = CashOperation.objects.filter(company=company, method='cash', date__lt=day)
     return payments + total(ops.filter(kind='income')) - total(ops.filter(kind='expense'))
 
 
 def cash_day(company, day):
-    payments = Payment.objects.filter(company=company, date=day)
+    payments = Payment.objects.filter(company=company, created_at__date=day)
     ops = CashOperation.objects.filter(company=company, date=day)
     opening = cash_balance_before(company, day)
     cash_in = total(payments.filter(method='cash')) + total(ops.filter(kind='income', method='cash'))
@@ -132,7 +149,7 @@ def cash_day(company, day):
         'closing': str(opening + cash_in - cash_out),
         'by_method': {method: str(total(payments.filter(method=method))) for method in METHODS},
         'payments': [payment_row(p) for p in payments.select_related('appointment', 'master')
-                     .order_by('appointment__start_time', 'id')],
+                     .order_by('created_at', 'id')],
         'operations': [operation_row(o) for o in ops.select_related('salary_payout', 'penalty').order_by('created_at')],
     }
 
@@ -140,7 +157,8 @@ def cash_day(company, day):
 def payment_row(p):
     a = p.appointment
     return {
-        'id': p.id, 'appointment': a.id, 'time': a.start_time.strftime('%H:%M'), 'client_name': a.client_name,
+        'id': p.id, 'appointment': a.id, 'visit_date': p.date.isoformat(), 'time': a.start_time.strftime('%H:%M'),
+        'client_name': a.client_name,
         'master': p.master.name if p.master else None, 'price': str(p.price), 'discount': str(p.discount),
         'amount': str(p.amount), 'method': p.method,
     }
@@ -173,6 +191,10 @@ def salary_row(master, date_from, date_to):
     accrued = percent_part + fixed_part
     payouts = SalaryPayout.objects.filter(master=master, date_from__gte=date_from, date_to__lte=date_to)
     paid = total(payouts)
+    # Выплаты, захватывающие период лишь частично (например, за 1–15 при просмотре 10–20):
+    # в «Выплачено» не входят, но показываются, чтобы не заплатить за одни и те же дни дважды
+    overlapping = (SalaryPayout.objects.filter(master=master, date_from__lte=date_to, date_to__gte=date_from)
+                   .exclude(pk__in=payouts.values('pk')))
     return {
         'master': {'id': master.id, 'name': master.name, 'is_active': master.is_active},
         'scheme': {'percent': str(scheme.percent), 'fixed_per_day': str(scheme.fixed_per_day)},
@@ -188,6 +210,11 @@ def salary_row(master, date_from, date_to):
             {'id': p.id, 'date_from': p.date_from.isoformat(), 'date_to': p.date_to.isoformat(),
              'amount': str(p.amount), 'created_at': p.created_at.isoformat()}
             for p in payouts.order_by('created_at')
+        ],
+        'overlapping_payouts': [
+            {'id': p.id, 'date_from': p.date_from.isoformat(), 'date_to': p.date_to.isoformat(),
+             'amount': str(p.amount)}
+            for p in overlapping.order_by('date_from')
         ],
     }
 

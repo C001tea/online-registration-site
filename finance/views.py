@@ -129,7 +129,7 @@ class OperationsView(APIView):
         date_from, date_to = period(request)
         ops = CashOperation.objects.filter(company=request.staff.company, date__gte=date_from, date__lte=date_to)
         return Response({
-            'operations': [services.operation_row(o) for o in ops.select_related('salary_payout').order_by('-date', '-created_at')],
+            'operations': [services.operation_row(o) for o in ops.select_related('salary_payout', 'penalty').order_by('-date', '-created_at')],
             'income_categories': services.INCOME_CATEGORIES,
             'expense_categories': services.EXPENSE_CATEGORIES,
         })
