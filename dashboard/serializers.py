@@ -470,11 +470,13 @@ class StaffMasterSerializer(serializers.ModelSerializer):
     schedule = serializers.SerializerMethodField()
     user = serializers.SerializerMethodField()
     has_access = serializers.SerializerMethodField()
+    # Может ли мастер сам менять свой график: своя галочка или общий переключатель салона
+    can_edit_schedule = serializers.SerializerMethodField()
 
     class Meta:
         model = Master
         fields = ['id', 'name', 'description', 'is_active', 'photo', 'services', 'service_terms', 'schedule', 'user',
-                  'has_access']
+                  'has_access', 'self_schedule', 'can_edit_schedule']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -491,6 +493,9 @@ class StaffMasterSerializer(serializers.ModelSerializer):
 
     def get_has_access(self, obj):
         return obj.user_id is not None
+
+    def get_can_edit_schedule(self, obj):
+        return obj.can_edit_own_schedule
 
     def validate_service_terms(self, value):
         company = staff_company(self.context)
@@ -673,7 +678,7 @@ class StaffCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
-                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'logo', 'main_photo']
+                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'logo', 'main_photo']
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},
                         'late_cancel_hours': {'max_value': 48}}

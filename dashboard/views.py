@@ -6,7 +6,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Count, Max
+from django.db.models import Count, Max, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
@@ -26,7 +26,7 @@ from bookings.login_limit import (
 )
 from bookings.models import (
     AdminProfile, Appointment, ClientProfile, Company, Master, MasterDayOff, MasterSchedule, MasterWorkDay, Service,
-    ServiceCategory,
+    ServiceCategory, ScheduleChange,
 )
 from bookings.schedule import day_schedule, days_schedule
 from bookings.phone import normalize_phone
@@ -38,7 +38,7 @@ from bookings import audit
 from .errors import StaffError
 from .visit_card import AppointmentCardActions
 from .permissions import (
-    BLOCKED_MESSAGE, IMPERSONATION_FORBIDDEN_MESSAGE, IsStaff, IsStaffManager, IsStaffManagerOrReadOnly, get_staff,
+    BLOCKED_MESSAGE, IMPERSONATION_FORBIDDEN_MESSAGE, IsStaff, IsStaffManager, IsStaffManagerOrReadOnly, IsStaffManagerOrSelfSchedule, get_staff,
     NOT_ENOUGH_RIGHTS_MESSAGE, is_impersonation,
 )
 from .photos import replace_photo, uploaded_file
@@ -498,8 +498,77 @@ class ServiceViewSet(StaffViewMixin, viewsets.ModelViewSet):
         instance.save(update_fields=['is_active'])
 
 
+SCHEDULE_ACTIONS = ('schedule', 'days', 'add_day_off', 'remove_day_off', 'schedule_history')
+HISTORY_LIMIT = 30
+
+
+def short_date(day):
+    return day.strftime('%d.%m.%Y')
+
+
+def dates_text(dates):
+    if len(dates) <= 3:
+        return ', '.join(short_date(d) for d in dates)
+    return f'{short_date(dates[0])} – {short_date(dates[-1])} ({len(dates)} дн.)'
+
+
+def week_day_text(row):
+    if not row.get('is_working'):
+        return 'выходной'
+    text = f"{hhmm(row['start_time'])}–{hhmm(row['end_time'])}"
+    if row.get('break_start') and row.get('break_end'):
+        text += f", обед {hhmm(row['break_start'])}–{hhmm(row['break_end'])}"
+    return text
+
+
+def parse_hhmm(value):
+    return datetime.strptime(value, '%H:%M').time() if value else None
+
+
+def week_row(data):
+    """День из schedule_days (время строками HH:MM) → вид validated_data, чтобы сравнить с новым."""
+    if not data:
+        return {'is_working': False}
+    return {'is_working': data.get('is_working'), 'start_time': parse_hhmm(data.get('start_time')),
+            'end_time': parse_hhmm(data.get('end_time')), 'break_start': parse_hhmm(data.get('break_start')),
+            'break_end': parse_hhmm(data.get('break_end'))}
+
+
 class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
     permission_classes = [IsStaffManagerOrReadOnly]
+
+    def get_permissions(self):
+        # График и выходные мастер может менять сам, если владелец или администратор разрешил
+        if self.action in SCHEDULE_ACTIONS:
+            return [IsStaffManagerOrSelfSchedule()]
+        return super().get_permissions()
+
+    @property
+    def by_master(self):
+        return not self.staff.is_manager
+
+    def log_change(self, master, text):
+        ScheduleChange.objects.create(master=master, user=self.request.user, by_master=self.by_master,
+                                      text=text[:500])
+
+    def block_master_conflicts(self, master, dates=None):
+        """Мастер не может сам убрать часы, на которые уже есть записи: откат и список мешающих записей."""
+        if not self.by_master:
+            return
+        now = timezone.localtime()
+        appointments = Appointment.objects.filter(
+            Q(date__gt=now.date()) | Q(date=now.date(), end_time__gt=now.time()),
+            master=master, status__in=ACTIVE_STATUSES)
+        if dates is not None:
+            appointments = appointments.filter(date__in=dates)
+        busy = sorted(set(appointments.values_list('date', flat=True)))
+        if not busy:
+            return
+        found = self.conflicts(master, busy, days_schedule(master, busy[0], busy[-1]))
+        if found:
+            raise StaffError(
+                f'Есть записи, которые не помещаются в новый график ({len(found)}). '
+                'Перенесите их или попросите администратора', conflicts=found)
     serializer_class = StaffMasterSerializer
     http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
     lookup_value_regex = r'\d+'
@@ -542,7 +611,17 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
     def schedule(self, request, pk=None):
         master = self.get_object()
         if request.method == 'PUT':
-            self.save_schedule(master, request.data)
+            before = {row['day_of_week']: week_row(row) for row in schedule_days(master)}
+            with transaction.atomic():
+                rows = self.save_schedule(master, request.data)
+                self.block_master_conflicts(master)
+                changed = sorted(
+                    (row for row in rows
+                     if week_day_text(row) != week_day_text(before.get(row['day_of_week'], {}))),
+                    key=lambda row: row['day_of_week'])
+                if changed:
+                    self.log_change(master, 'Неделя: ' + '; '.join(
+                        f"{DAY_NAMES[row['day_of_week']]} — {week_day_text(row)}" for row in changed))
             master = self.get_object()  # перечитать график
         return Response(schedule_days(master))
 
@@ -579,6 +658,7 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
                         'break_end': row['break_end'],
                     },
                 )
+        return rows
 
     @action(detail=True, methods=['get', 'put'])
     def days(self, request, pk=None):
@@ -606,6 +686,14 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
                                       break_start=data['break_start'], break_end=data['break_end'])
                         for d in dates
                     ])
+                self.block_master_conflicts(master, dates)
+                if data['mode'] == 'off':
+                    what = 'выходной'
+                elif data['mode'] == 'custom':
+                    what = week_day_text({'is_working': True, **data})
+                else:
+                    what = 'как в недельном графике'
+                self.log_change(master, f'{dates_text(dates)}: {what}')
             schedules = days_schedule(master, dates[0], dates[-1])
             return Response({
                 'days': self.days_data(master, dates[0], dates[-1], schedules),
@@ -651,7 +739,11 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
         serializer = DayOffInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         date = serializer.validated_data['date']
-        day_off, created = MasterDayOff.objects.get_or_create(master=master, date=date)
+        with transaction.atomic():
+            day_off, created = MasterDayOff.objects.get_or_create(master=master, date=date)
+            self.block_master_conflicts(master, [date])
+            if created:
+                self.log_change(master, f'{short_date(date)}: выходной')
         appointments_count = Appointment.objects.filter(
             master=master, date=date, status__in=ACTIVE_STATUSES
         ).count()
@@ -667,8 +759,19 @@ class MasterViewSet(StaffViewMixin, viewsets.ModelViewSet):
         if not date:
             raise StaffError('Дата в формате YYYY-MM-DD')
         # Идемпотентно: снять несуществующий выходной — тоже 204
-        MasterDayOff.objects.filter(master=master, date=date).delete()
+        deleted, _ = MasterDayOff.objects.filter(master=master, date=date).delete()
+        if deleted:
+            self.log_change(master, f'{short_date(date)}: выходной снят')
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['get'], url_path='schedule-history')
+    def schedule_history(self, request, pk=None):
+        master = self.get_object()
+        rows = master.schedule_changes.select_related('user')[:HISTORY_LIMIT]
+        return Response([{
+            'at': row.created_at.isoformat(), 'text': row.text, 'by_master': row.by_master,
+            'user': (row.user.get_full_name() or row.user.username) if row.user_id else None,
+        } for row in rows])
 
     def check_can_manage_account(self, target):
         """Защита от захвата чужого аккаунта через смену пароля мастера."""

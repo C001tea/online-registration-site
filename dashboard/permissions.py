@@ -14,6 +14,7 @@ MANAGER_ROLES = ('owner', 'admin')
 NO_STAFF_TOKEN_MESSAGE = 'Нужен вход в панель салона'
 NO_STAFF_ACCESS_MESSAGE = 'У этого аккаунта нет доступа к панели салона'
 NOT_ENOUGH_RIGHTS_MESSAGE = 'Недостаточно прав'
+SELF_SCHEDULE_FORBIDDEN_MESSAGE = 'Изменить график может администратор салона'
 SESSION_EXPIRED_MESSAGE = 'Сессия устарела, войдите снова'
 BLOCKED_MESSAGE = 'Салон заблокирован. Напишите в поддержку TimePoint'
 IMPERSONATION_FORBIDDEN_MESSAGE = 'Недоступно при входе от имени салона'
@@ -97,6 +98,23 @@ class IsStaffManagerOrReadOnly(IsStaff):
             return False
         if request.method not in SAFE_METHODS and not request.staff.is_manager:
             raise PermissionDenied({'error': NOT_ENOUGH_RIGHTS_MESSAGE})
+        return True
+
+
+class IsStaffManagerOrSelfSchedule(IsStaff):
+    """График мастера: менять может владелец, администратор или сам мастер, если ему это разрешено.
+
+    Мастер видит в MasterViewSet только себя, так что чужой график ему недоступен (404).
+    """
+
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+        staff = request.staff
+        if request.method in SAFE_METHODS or staff.is_manager:
+            return True
+        if staff.master is None or not staff.master.can_edit_own_schedule:
+            raise PermissionDenied({'error': SELF_SCHEDULE_FORBIDDEN_MESSAGE})
         return True
 
 
