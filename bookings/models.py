@@ -145,6 +145,11 @@ class Appointment(models.Model):
     # Записывает другой человек: кто звонил (клиент записи — тот, кто придёт)
     booker_name = models.CharField(max_length=200, blank=True)
     booker_phone = models.CharField(max_length=20, blank=True)
+    # Клиент подтвердил, что придёт (отдельно от статуса: статус — решение салона).
+    # telegram — кнопка «Приду» в боте, phone — администратор отметил после звонка; пусто — не подтверждал
+    VISIT_CONFIRM_CHOICES = [('', 'Не подтверждал'), ('telegram', 'В Telegram'), ('phone', 'По телефону')]
+    visit_confirmed = models.CharField(max_length=10, choices=VISIT_CONFIRM_CHOICES, blank=True, default='')
+    visit_confirmed_at = models.DateTimeField(null=True, blank=True)
     # Секрет ссылки «Управлять записью»: клиент переносит или отменяет запись без входа
     manage_token = models.CharField(max_length=32, unique=True, null=True, blank=True, editable=False)
 

@@ -38,17 +38,54 @@ def enqueue(chat_id, text, buttons=None):
 
 # --- Кнопки под сообщением клиенту (callback: действие:id привязки) ---
 
-def client_buttons(link):
-    """«Отменить» — только пока правило салона разрешает отмену клиентом."""
+# Кнопку «Приду» показываем в напоминании, а в остальных сообщениях — если до визита меньше суток
+# (напоминание за сутки уже не придёт). Сразу после записи спрашивать «придёте?» смысла нет.
+ASK_VISIT_BEFORE = timedelta(hours=24)
+
+
+def should_ask_visit(appointment, now=None):
+    return (appointment.status in ACTIVE_STATUSES and not appointment.visit_confirmed
+            and starts_at(appointment) - (now or timezone.now()) <= ASK_VISIT_BEFORE)
+
+
+def client_buttons(link, ask_visit=None):
+    """«Приду» — пока клиент не подтвердил визит; «Отменить» — пока правило салона разрешает отмену."""
     appointment = link.appointment
     lang = texts.lang_of(appointment)
+    if appointment.status not in ACTIVE_STATUSES:
+        return []
     cancel = client_can_cancel(appointment)
-    if appointment.status == 'pending':
-        row = [(tr('Подтверждаю ✅', lang), f'ok:{link.id}')]
+    ask = (not appointment.visit_confirmed) and (should_ask_visit(appointment) if ask_visit is None else ask_visit)
+    if ask:
+        row = [(tr('Приду ✅', lang), f'ok:{link.id}')]
         return [row + [(tr('Отменить', lang), f'cx:{link.id}')]] if cancel else [row]
-    if appointment.status == 'confirmed' and cancel:
+    if cancel:
         return [[(tr('Отменить запись', lang), f'cx:{link.id}')]]
     return []
+
+
+def card_message(link, ask_visit=None):
+    """Карточка записи клиенту и кнопки под ней (с просьбой подтвердить визит, если спрашиваем)."""
+    appointment = link.appointment
+    ask = (not appointment.visit_confirmed) and (should_ask_visit(appointment) if ask_visit is None else ask_visit)
+    return card_text(appointment, ask_visit=ask), client_buttons(link, ask_visit=ask)
+
+
+def confirm_visit(appointment, channel, user=None):
+    """Клиент подтвердил визит (кнопка «Приду» или звонок администратора)."""
+    appointment.visit_confirmed = channel
+    appointment.visit_confirmed_at = timezone.now()
+    appointment.save(update_fields=['visit_confirmed', 'visit_confirmed_at'])
+    audit.log(appointment, 'visit_confirmed', user, actor='client' if channel == 'telegram' else 'staff',
+              details={'channel': channel})
+
+
+def reset_visit_confirmation(appointment):
+    """Новое время визита — подтверждение нужно заново."""
+    if appointment.visit_confirmed:
+        Appointment.objects.filter(pk=appointment.pk).update(visit_confirmed='', visit_confirmed_at=None)
+        appointment.visit_confirmed = ''
+        appointment.visit_confirmed_at = None
 
 
 def client_url(appointment):
@@ -87,7 +124,7 @@ def appointment_created(appointment, user=None):
         if client_chat:
             link.chat_id = client_chat.chat_id
             link.save(update_fields=['chat_id'])
-            enqueue(link.chat_id, card_text(appointment), client_buttons(link))
+            enqueue(link.chat_id, *card_message(link))
     notify_staff(appointment, texts.staff_new(appointment, blacklist_of(appointment)))
 
 
@@ -107,9 +144,9 @@ def manage_url(appointment):
     return urlunsplit((parts.scheme, parts.netloc, f'/manage/{appointment.manage_token}', parts.query, ''))
 
 
-def card_text(appointment):
+def card_text(appointment, ask_visit=False):
     """Карточка записи клиенту; если есть долг — блок: за что штраф и что оплатить при визите."""
-    text = texts.client_card(appointment)
+    text = texts.client_card(appointment, ask_visit=ask_visit)
     url = manage_url(appointment)
     if url and appointment.status in ACTIVE_STATUSES:
         text += texts.manage_line(appointment, url)
@@ -141,6 +178,9 @@ def appointment_cancelled_by_client(appointment):
 
 def appointment_changed_by_staff(before, appointment):
     """Салон отменил или перенёс запись → сообщение клиенту, если его Telegram привязан."""
+    moved = (before['date'] != appointment.date or before['start_time'] != appointment.start_time)
+    if moved and appointment.status in ACTIVE_STATUSES:
+        reset_visit_confirmation(appointment)
     link = AppointmentTelegram.objects.filter(appointment=appointment, chat_id__isnull=False).first()
     if not link:
         return
@@ -151,6 +191,7 @@ def appointment_changed_by_staff(before, appointment):
             or before['master_id'] != appointment.master_id):
         # Новое время — напоминания нужны заново
         AppointmentTelegram.objects.filter(pk=link.pk).update(reminder_24h_sent=False, reminder_1h_sent=False)
+        link.appointment = appointment
         enqueue(link.chat_id, texts.salon_moved(appointment), client_buttons(link))
 
 
@@ -160,6 +201,7 @@ def appointment_rescheduled_by_client(before, appointment):
         'date': [before['date'].isoformat(), appointment.date.isoformat()],
         'start_time': [before['start_time'].strftime('%H:%M'), appointment.start_time.strftime('%H:%M')]})
     notify_staff(appointment, texts.staff_rescheduled(before, appointment))
+    reset_visit_confirmation(appointment)
     link = AppointmentTelegram.objects.filter(appointment=appointment).first()
     if link:
         AppointmentTelegram.objects.filter(pk=link.pk).update(reminder_24h_sent=False, reminder_1h_sent=False)
@@ -242,7 +284,7 @@ def link_appointment(chat_id, token):
         client = link.appointment.client
         if client:
             ClientTelegram.objects.update_or_create(user=client, defaults={'chat_id': chat_id})
-    reply(chat_id, card_text(link.appointment), client_buttons(link))
+    reply(chat_id, *card_message(link))
 
 
 def link_staff(chat_id, token):
@@ -292,11 +334,11 @@ def apply_action(action, link_id, chat_id, message_id):
         elif action in ('cx', 'cy') and not client_can_cancel(appointment):
             popup = cancel_rule_text(link.appointment.company, lang)
             editable = False
-        elif action == 'ok' and appointment.status == 'pending':
-            appointment.status = 'confirmed'
-            appointment.save(update_fields=['status'])
-            audit.log(appointment, 'confirmed_by_client', actor='client')
-            link.appointment.status = 'confirmed'
+        elif action == 'ok':
+            # Клиент подтвердил визит; статус записи (решение салона) не меняется
+            if not appointment.visit_confirmed:
+                confirm_visit(appointment, 'telegram')
+            link.appointment.visit_confirmed = appointment.visit_confirmed
             popup = tr('Спасибо, ждём вас!', lang)
         elif action == 'cy':
             late = penalties.is_late_cancel(link.appointment)
@@ -310,7 +352,7 @@ def apply_action(action, link_id, chat_id, message_id):
                 if penalty:
                     transaction.on_commit(lambda: penalty_created(penalty))
     text = texts.client_card(link.appointment)
-    buttons = client_buttons(link)
+    buttons = client_buttons(link, ask_visit=False if action == 'ok' else None)
     if action == 'cx' and editable:
         fee = penalties.late_cancel_amount(link.appointment)
         if fee:
@@ -381,7 +423,7 @@ def queue_reminders(now=None):
                 minutes = appointment.reminder_minutes
                 if minutes and left <= timedelta(minutes=minutes) and lead > timedelta(minutes=minutes) + timedelta(minutes=30) \
                         and not link.reminder_24h_sent and mark_once(link, 'reminder_24h_sent'):
-                    enqueue(link.chat_id, texts.reminder_custom(appointment), client_buttons(link))
+                    enqueue(link.chat_id, texts.reminder_custom(appointment), client_buttons(link, ask_visit=True))
                     queued += 1
                 continue
             if left <= timedelta(hours=1):
@@ -390,7 +432,7 @@ def queue_reminders(now=None):
                     queued += 1
             elif left <= timedelta(hours=24):
                 if not link.reminder_24h_sent and lead > REMINDER_24H_MIN_LEAD and mark_once(link, 'reminder_24h_sent'):
-                    enqueue(link.chat_id, texts.reminder_24h(appointment), client_buttons(link))
+                    enqueue(link.chat_id, texts.reminder_24h(appointment), client_buttons(link, ask_visit=True))
                     queued += 1
     return queued
 

@@ -84,6 +84,10 @@ RO = {
         'Codul de autentificare: <b>{code}</b>\n\nIntroduceți-l pe site. Nu comunicați nimănui acest cod.',
     # --- Бот: запись клиента ---
     '⏳ Ждём вашего подтверждения': '⏳ Așteptăm confirmarea dvs.',
+    '⏳ Салон скоро подтвердит запись': '⏳ Salonul va confirma programarea în curând',
+    '👍 Вы подтвердили, что придёте': '👍 Ați confirmat că veniți',
+    'Пожалуйста, подтвердите, что придёте, — кнопка ниже.': 'Vă rugăm să confirmați că veniți — butonul de mai jos.',
+    'Приду ✅': 'Vin ✅',
     '✅ Запись подтверждена': '✅ Programarea este confirmată',
     '❌ Запись отменена': '❌ Programarea a fost anulată',
     'Визит состоялся': 'Vizita a avut loc',

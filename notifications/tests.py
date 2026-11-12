@@ -120,9 +120,10 @@ class BookingFlowTests(TelegramTestCase):
         sent = self.fake.last('sendMessage')
         self.assertEqual(sent['chat_id'], CLIENT_CHAT)
         self.assertIn('JcNails', sent['text'])
-        self.assertIn('Ждём вашего подтверждения', sent['text'])
+        self.assertIn('Салон скоро подтвердит запись', sent['text'])
+        # До визита неделя: «придёте?» спросим в напоминании за сутки, сейчас — только «Отменить»
         buttons = [b['callback_data'] for b in sent['reply_markup']['inline_keyboard'][0]]
-        self.assertEqual(buttons, [f'ok:{link.id}', f'cx:{link.id}'])
+        self.assertEqual(buttons, [f'cx:{link.id}'])
 
     def test_link_cannot_be_taken_by_another_chat(self):
         link = self.linked_appointment()
@@ -134,9 +135,16 @@ class BookingFlowTests(TelegramTestCase):
     def test_confirm(self):
         link = self.linked_appointment()
         self.press(f'ok:{link.id}')
-        self.assertEqual(Appointment.objects.get().status, 'confirmed')
+        appointment = Appointment.objects.get()
+        # «Приду» — подтверждение клиента; статус (решение салона) не меняется
+        self.assertEqual(appointment.status, 'pending')
+        self.assertEqual(appointment.visit_confirmed, 'telegram')
+        self.assertIsNotNone(appointment.visit_confirmed_at)
+        self.assertTrue(appointment.logs.filter(action='visit_confirmed', actor='client').exists())
         edited = self.fake.last('editMessageText')
-        self.assertIn('Запись подтверждена', edited['text'])
+        self.assertIn('Вы подтвердили, что придёте', edited['text'])
+        buttons = [b['callback_data'] for row in edited['reply_markup']['inline_keyboard'] for b in row]
+        self.assertNotIn(f'ok:{link.id}', buttons)
         self.assertEqual(self.fake.last('answerCallbackQuery')['text'], 'Спасибо, ждём вас!')
 
     def test_buttons_from_other_chat_are_ignored(self):
@@ -170,7 +178,7 @@ class BookingFlowTests(TelegramTestCase):
         self.api.force_authenticate(user)
         self.assertEqual(self.book().status_code, 201)
         self.assertEqual(AppointmentTelegram.objects.get().chat_id, CLIENT_CHAT)
-        self.assertIn('Ждём вашего подтверждения', self.queued(CLIENT_CHAT)[0])
+        self.assertIn('Салон скоро подтвердит запись', self.queued(CLIENT_CHAT)[0])
 
     def test_start_remembers_chat_of_client_account(self):
         user = User.objects.create_user('client')
@@ -474,13 +482,13 @@ class CancelRuleInBotTests(TelegramTestCase):
         self.company.phone = '+37322000000'
         self.company.save()
         link = self.linked_appointment()
-        buttons = [b['callback_data'] for b in self.fake.last('sendMessage')['reply_markup']['inline_keyboard'][0]]
-        self.assertEqual(buttons, [f'ok:{link.id}'])  # подтвердить можно, отменить — нет
+        self.assertNotIn('reply_markup', self.fake.last('sendMessage'))  # отменить нельзя, «придёте?» — позже
+        self.assertEqual(services.client_buttons(link, ask_visit=True), [[('Приду ✅', f'ok:{link.id}')]])
         self.press(f'cy:{link.id}')
         self.assertEqual(Appointment.objects.get().status, 'pending')
         self.assertIn('не позже чем за 400 ч', self.fake.last('answerCallbackQuery')['text'])
         self.press(f'ok:{link.id}')
-        self.assertEqual(Appointment.objects.get().status, 'confirmed')
+        self.assertEqual(Appointment.objects.get().visit_confirmed, 'telegram')
 
 
 class RomanianTests(TelegramTestCase):
@@ -503,9 +511,10 @@ class RomanianTests(TelegramTestCase):
         self.assertIn('Serviciu: Маникюр', card['text'])
         self.assertIn('Maestru: Анна', card['text'])
         self.assertIn(MONTHS_RO[self.day.month - 1], card['text'])
-        self.assertIn('Așteptăm confirmarea', card['text'])
+        self.assertIn('Salonul va confirma programarea', card['text'])
         labels = [b['text'] for row in card['reply_markup']['inline_keyboard'] for b in row]
-        self.assertEqual(labels, ['Confirm ✅', 'Anulează'])
+        self.assertEqual(labels, ['Anulează programarea'])
+        self.assertEqual(services.client_buttons(link, ask_visit=True)[0][0][0], 'Vin ✅')
         self.press(f'cx:{link.id}')
         self.assertIn('Sigur anulați programarea?', self.fake.last('editMessageText')['text'])
         self.press(f'cy:{link.id}')
@@ -559,3 +568,25 @@ class RomanianTests(TelegramTestCase):
         self.assertIn('Codul de autentificare', self.fake.last('sendMessage')['text'])
         response = self.api.post('/api/auth/telegram/verify/', {'token': token, 'code': '000000x'}, format='json')
         self.assertEqual(response.json()['error'], 'Cod greșit')
+
+
+class VisitConfirmReminderTests(ReminderTests):
+    """Напоминание за сутки спрашивает «придёте?»; после «Приду» — больше не спрашиваем."""
+
+    def test_reminder_asks_visit_and_button_confirms(self):
+        link = self.make(timedelta(hours=23), booked_before=timedelta(days=3))
+        services.queue_reminders()
+        message = OutgoingMessage.objects.filter(chat_id=CLIENT_CHAT).last()
+        self.assertIn('подтвердите, что придёте', message.text)
+        self.assertEqual(message.buttons[0][0][1], f'ok:{link.id}')
+        self.press(f'ok:{link.id}')
+        appointment = Appointment.objects.get(pk=link.appointment_id)
+        self.assertEqual((appointment.status, appointment.visit_confirmed), ('confirmed', 'telegram'))
+
+    def test_confirmed_client_reminder_without_question(self):
+        link = self.make(timedelta(hours=23), booked_before=timedelta(days=3))
+        Appointment.objects.filter(pk=link.appointment_id).update(visit_confirmed='phone')
+        services.queue_reminders()
+        message = OutgoingMessage.objects.filter(chat_id=CLIENT_CHAT).last()
+        self.assertNotIn('подтвердите', message.text)
+        self.assertNotIn(f'ok:{link.id}', str(message.buttons))
