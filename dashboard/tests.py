@@ -272,7 +272,8 @@ class MeTests(StaffTestCase):
         self.assertEqual(data['company'], {'id': self.company.id, 'slug': 'a', 'name': 'Салон a',
                                            'penalty_percent': 50, 'late_cancel_hours': 3, 'status': 'active',
                                            'trial_ends_at': None,
-                                           'public_url': settings.SALON_URL_TEMPLATE.format(slug='a')})
+                                           'public_url': settings.SALON_URL_TEMPLATE.format(slug='a'),
+                                           'booking_accent': ''})
         self.assertIsNone(data['master_id'])
         self.assertEqual(data['name'], 'owner')
 

@@ -49,7 +49,7 @@ class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'main_photo', 'latitude', 'longitude', 'description',
-                  'cancel_hours', 'penalty_percent', 'late_cancel_hours', 'auto_confirm']
+                  'cancel_hours', 'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'booking_accent']
 
 # За сколько минут до визита клиент может попросить напоминание (0 — не напоминать)
 REMINDER_CHOICES = [0, 60, 120, 180, 360, 720, 1440, 2880]

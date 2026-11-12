@@ -47,7 +47,7 @@ from .serializers import (
     StaffLoginSerializer, PasswordChangeSerializer, StaffAppointmentSerializer, StaffAppointmentWriteSerializer,
     StaffCategorySerializer, StaffServiceSerializer, StaffMasterSerializer, ScheduleDaySerializer,
     DayOffInputSerializer, MasterAccessSerializer, StaffCompanySerializer, WorkDaysInputSerializer,
-    MAX_CALENDAR_RANGE, staff_me, schedule_days, day_off_data, day_schedule_data, work_day_data, hhmm, paid,
+    MAX_CALENDAR_RANGE, StaffAppearanceSerializer, staff_me, schedule_days, day_off_data, day_schedule_data, work_day_data, hhmm, paid,
 )
 from .tokens import STAFF_SCOPE, StaffRefreshToken, get_staff_tokens, token_matches_password
 
@@ -223,6 +223,19 @@ class StaffMeView(APIView):
         if is_impersonation(request):
             data['impersonated_by'] = request.auth.get('imp_name') or 'support'
         return Response(data)
+
+    def patch(self, request):
+        """Оформление панели: {appearance: {theme, accent}} — у каждого сотрудника своё."""
+        if is_impersonation(request):
+            raise PermissionDenied({'error': IMPERSONATION_FORBIDDEN_MESSAGE})
+        from .models import StaffAppearance
+        if not isinstance(request.data, dict):
+            raise ValidationError({'error': 'Ожидается объект {appearance: {...}}'})
+        serializer = StaffAppearanceSerializer(data=request.data.get('appearance') or {})
+        serializer.is_valid(raise_exception=True)
+        if serializer.validated_data:
+            StaffAppearance.objects.update_or_create(user=request.user, defaults=serializer.validated_data)
+        return self.get(request)
 
 
 # --- Журнал записей ---
@@ -868,6 +881,9 @@ class DaysOffListView(APIView):
         return Response([day_off_data(day_off) for day_off in days_off.order_by('date', 'master_id')])
 
 
+BOOKING_ACCENT_OWNER_MESSAGE = 'Цвет сайта записи меняет владелец салона'
+
+
 class CompanyView(APIView):
     permission_classes = [IsStaffManagerOrReadOnly]
 
@@ -875,6 +891,9 @@ class CompanyView(APIView):
         return Response(StaffCompanySerializer(request.staff.company).data)
 
     def patch(self, request):
+        # Цвет сайта записи для клиентов — решение владельца
+        if 'booking_accent' in request.data and request.staff.role != 'owner':
+            raise PermissionDenied({'error': BOOKING_ACCENT_OWNER_MESSAGE})
         serializer = StaffCompanySerializer(request.staff.company, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         company = serializer.save()
