@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -92,7 +93,8 @@ class AppointmentCardActions:
             raise StaffError('Напоминание уже отправлено — повторить можно через 10 минут')
         link = getattr(appointment, 'telegram', None) if hasattr(appointment, 'telegram') else None
         if link and link.chat_id and telegram.enabled():
-            notifications.enqueue(link.chat_id, texts.reminder_24h(appointment), notifications.client_buttons(link))
+            notifications.enqueue(link.chat_id, texts.reminder_24h(appointment),
+                                  notifications.client_buttons(link, ask_visit=True))
             channel = 'telegram'
         elif appointment.client_email and client_email.enabled():
             lang = appointment.lang or 'ru'
@@ -104,6 +106,36 @@ class AppointmentCardActions:
             raise StaffError('У клиента нет Telegram и email — позвоните ему')
         audit.log(appointment, 'reminded', request.user, details={'channel': channel})
         return Response({'channel': channel})
+
+    @action(detail=True, methods=['post'], url_path='visit-confirm')
+    def visit_confirm(self, request, pk=None):
+        """Клиент подтвердил визит по телефону ({confirmed: true}) или снять отметку ({confirmed: false})."""
+        appointment = self.get_object()
+        if appointment.status not in ACTIVE_STATUSES or appointment.date < timezone.localdate():
+            raise StaffError('Отметить можно только предстоящую запись')
+        if request.data.get('confirmed', True) in (False, 'false', '0', 0):
+            if appointment.visit_confirmed:
+                appointment.visit_confirmed = ''
+                appointment.visit_confirmed_at = None
+                appointment.save(update_fields=['visit_confirmed', 'visit_confirmed_at'])
+                audit.log(appointment, 'visit_unconfirmed', request.user)
+        elif not appointment.visit_confirmed:
+            notifications.confirm_visit(appointment, 'phone', request.user)
+        return Response(StaffAppointmentSerializer(appointment, context=self.get_serializer_context()).data)
+
+    @action(detail=False, methods=['get'])
+    def unconfirmed(self, request):
+        """Записи на дату (по умолчанию завтра), где клиент ещё не подтвердил визит — кому позвонить."""
+        raw = request.query_params.get('date')
+        day = parse_date(raw) if raw else timezone.localdate() + timedelta(days=1)
+        if day is None:
+            raise StaffError('Дата в формате YYYY-MM-DD')
+        rows = list(self.get_queryset().filter(date=day, status__in=ACTIVE_STATUSES, visit_confirmed='')
+                    .order_by('start_time', 'id'))
+        return Response({
+            'date': day.isoformat(),
+            'appointments': StaffAppointmentSerializer(rows, many=True, context=self.get_serializer_context()).data,
+        })
 
     @action(detail=True, methods=['post'], url_path='add-service')
     def add_service(self, request, pk=None):

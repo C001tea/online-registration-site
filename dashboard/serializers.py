@@ -130,6 +130,7 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
             'id', 'date', 'start_time', 'end_time', 'duration', 'status', 'master', 'service',
             'client_name', 'client_phone', 'client_email', 'notes', 'source', 'created_at', 'payment',
             'blacklist', 'penalty', 'visit', 'discount', 'buffer_minutes', 'booker_name', 'booker_phone', 'reminder',
+            'visit_confirmed', 'visit_confirmed_at',
         ]
         read_only_fields = fields
 

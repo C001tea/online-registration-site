@@ -8,7 +8,7 @@ from bookings.i18n import MONTHS, WEEKDAYS, tr
 from bookings.terms import price_of
 
 STATUS_LINES = {
-    'pending': '⏳ Ждём вашего подтверждения',
+    'pending': '⏳ Салон скоро подтвердит запись',
     'confirmed': '✅ Запись подтверждена',
     'cancelled': '❌ Запись отменена',
     'completed': 'Визит состоялся',
@@ -43,8 +43,19 @@ def status_line(appointment):
     return tr(STATUS_LINES.get(appointment.status, ''), lang_of(appointment))
 
 
-def client_card(appointment):
-    return f'{details(appointment, lang_of(appointment))}\n\n{status_line(appointment)}'
+VISIT_CONFIRMED_LINE = '👍 Вы подтвердили, что придёте'
+ASK_VISIT_LINE = 'Пожалуйста, подтвердите, что придёте, — кнопка ниже.'
+
+
+def client_card(appointment, ask_visit=False):
+    lang = lang_of(appointment)
+    text = f'{details(appointment, lang)}\n\n{status_line(appointment)}'
+    if appointment.status in ('pending', 'confirmed'):
+        if getattr(appointment, 'visit_confirmed', ''):
+            text += '\n' + tr(VISIT_CONFIRMED_LINE, lang)
+        elif ask_visit:
+            text += '\n' + tr(ASK_VISIT_LINE, lang)
+    return text
 
 
 def client_message(title, appointment):
@@ -167,12 +178,19 @@ def staff_rescheduled(before, appointment):
             f'Клиент: {escape(appointment.client_name)}, {escape(appointment.client_phone)}')
 
 
+def with_visit_question(text, appointment):
+    """Напоминание с кнопкой «Приду»: просим подтвердить, если клиент ещё не подтверждал."""
+    if getattr(appointment, 'visit_confirmed', ''):
+        return text
+    return f'{text}\n\n{tr(ASK_VISIT_LINE, lang_of(appointment))}'
+
+
 def reminder_24h(appointment):
-    return client_message('🔔 <b>Напоминаем о записи завтра</b>', appointment)
+    return with_visit_question(client_message('🔔 <b>Напоминаем о записи завтра</b>', appointment), appointment)
 
 
 def reminder_custom(appointment):
-    return client_message('🔔 <b>Напоминаем о записи</b>', appointment)
+    return with_visit_question(client_message('🔔 <b>Напоминаем о записи</b>', appointment), appointment)
 
 
 def reminder_1h(appointment):
