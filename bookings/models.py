@@ -35,6 +35,8 @@ class Company(models.Model):
     # Онлайн-записи сразу «Подтверждена» (для клиентов без Telegram); иначе — «Ожидает»,
     # подтверждает клиент в боте или администратор в панели
     auto_confirm = models.BooleanField(default=False)
+    # Все мастера сами ведут свой график (иначе — только те, у кого Master.self_schedule)
+    masters_self_schedule = models.BooleanField(default=False)
 
     # Самостоятельная регистрация: салон виден клиентам после подтверждения email владельца
     STATUS_PENDING = 'pending'
@@ -66,9 +68,15 @@ class Master(models.Model):
     description = models.TextField(blank=True)
     services = models.ManyToManyField('Service', blank=True, related_name='masters')
     is_active = models.BooleanField(default=True)
+    # Мастер сам меняет свой график в панели (даёт владелец или администратор)
+    self_schedule = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
+
+    @property
+    def can_edit_own_schedule(self):
+        return self.self_schedule or self.company.masters_self_schedule
 
 class ServiceCategory(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='categories')
@@ -235,6 +243,22 @@ class MasterDayOff(models.Model):
 
     def __str__(self):
         return f"{self.master.name} - {self.date}"
+
+
+class ScheduleChange(models.Model):
+    """История изменений графика мастера: кто и что поменял."""
+    master = models.ForeignKey(Master, on_delete=models.CASCADE, related_name='schedule_changes')
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    # Изменил сам мастер (а не владелец или администратор)
+    by_master = models.BooleanField(default=False)
+    text = models.CharField(max_length=500)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f"{self.master.name}: {self.text}"
 
 
 class ClientProfile(models.Model):
