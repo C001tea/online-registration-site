@@ -29,9 +29,10 @@
 
 ## Адрес сайта салона
 
-Пока не настроен `*.timepoint.tech`, ссылка салона — `https://nail-salon-frontend.vercel.app/?salon=<адрес>`.
-Когда в Vercel добавлен домен `*.timepoint.tech` (и DNS): Server settings →
-`SALON_URL_TEMPLATE` = `https://{slug}.timepoint.tech` — ссылки в панели и письмах станут короткими.
+Ссылка салона — `https://<адрес>.timepoint.tech` (`SALON_URL_TEMPLATE` = `https://{slug}.timepoint.tech`,
+панель — `PANEL_URL` = `https://timepoint.tech`). Домены `timepoint.tech`, `www` (308 на основной) и `*.timepoint.tech`
+подключены в Vercel, DNS домена — Vercel DNS (NS ns1/ns2.vercel-dns.com, меняются в кабинете get.tech).
+Старый адрес `https://nail-salon-frontend.vercel.app/?salon=<адрес>` продолжает работать.
 
 ## Если что-то не так
 

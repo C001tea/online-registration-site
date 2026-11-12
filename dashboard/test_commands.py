@@ -33,7 +33,7 @@ class CreateSalonTests(TestCase):
 
     def test_creates_salon_and_owner_who_can_log_in(self):
         out = run_create_salon(self.data, '--yes')
-        self.assertIn('?salon=nail-bar', out)
+        self.assertIn('https://nail-bar.timepoint.tech', out)
         company = Company.objects.get(slug='nail-bar')
         self.assertEqual(company.name, 'Nail Bar')
         self.assertEqual(AdminProfile.objects.get(user__username='nailbar').company, company)

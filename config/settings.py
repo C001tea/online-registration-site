@@ -260,7 +260,7 @@ EMAIL_CONFIGURED = bool(EMAIL_HOST or os.getenv('EMAIL_BACKEND'))
 SIGNUP_ENABLED = EMAIL_CONFIGURED and os.getenv('SIGNUP_ENABLED', 'False').lower() in ('true', '1', 'yes')
 TRIAL_DAYS = int(os.getenv('TRIAL_DAYS', '14'))
 # Адрес панели для ссылок в письмах и адрес сайта записи салона ({slug})
-PANEL_URL = os.getenv('PANEL_URL', 'https://nail-salon-frontend.vercel.app').rstrip('/')
-SALON_URL_TEMPLATE = os.getenv('SALON_URL_TEMPLATE', 'https://nail-salon-frontend.vercel.app/?salon={slug}')
+PANEL_URL = os.getenv('PANEL_URL', 'https://timepoint.tech').rstrip('/')
+SALON_URL_TEMPLATE = os.getenv('SALON_URL_TEMPLATE', 'https://{slug}.timepoint.tech')
 # Ссылка «сбросить пароль» действует 2 часа
 PASSWORD_RESET_TIMEOUT = 2 * 3600

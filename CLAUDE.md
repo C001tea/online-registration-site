@@ -9,9 +9,9 @@
 |---|---|
 | Бэкенд (Django + DRF, Postgres) | github.com/C001tea/online-registration-site |
 | Фронтенд (React + Vite + Tailwind) | github.com/NichitaOrmanji/nail-salon-frontend |
-| Сайт | https://nail-salon-frontend.vercel.app (Vercel; `vercel.json` проксирует `/api` на api.timepoint.tech) |
+| Сайт | https://timepoint.tech, салоны — `https://<slug>.timepoint.tech` (Vercel, DNS в Vercel; `vercel.json` проксирует `/api` на api.timepoint.tech; старый адрес nail-salon-frontend.vercel.app работает) |
 | API | https://api.timepoint.tech (сервер Oracle, Docker, Caddy; деплой — GitHub Actions) |
-| Лендинг | `/welcome` (на `timepoint.tech` и `www` станет главной) |
+| Лендинг | https://timepoint.tech (и `/welcome` на любом адресе) |
 | Регистрация салона / вход | `/admin-panel/signup`, `/admin-panel/login` |
 | Домен | timepoint.tech (Namecheap); `*.timepoint.tech` для салонов в Vercel ещё НЕ подключён |
 
