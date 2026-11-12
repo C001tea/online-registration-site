@@ -18,7 +18,7 @@ from django.core.management.base import BaseCommand, CommandError
 from dashboard.salons import create_salon, login_taken, slug_error
 
 USERNAME_RE = re.compile(r'^[A-Za-z0-9_.@+-]{3,150}$')
-SITE_URL = 'https://nail-salon-frontend.vercel.app'
+SITE_URL = 'https://timepoint.tech'
 
 
 def clean(data):
@@ -78,7 +78,6 @@ class Command(BaseCommand):
                      address=data['address'], phone=data['phone'])
 
         self.stdout.write(self.style.SUCCESS('Готово.'))
-        self.stdout.write(f'Сайт записи: {SITE_URL}/?salon={data["slug"]}  (или https://{data["slug"]}.timepoint.tech '
-                          f'после добавления домена в Vercel)')
+        self.stdout.write(f'Сайт записи: https://{data["slug"]}.timepoint.tech')
         self.stdout.write(f'Панель: {SITE_URL}/admin-panel/login — логин {data["owner"]}')
         self.stdout.write('Дальше владелец: Настройки → Услуги → Мастера → Графики (Помощь → «С чего начать»)')
