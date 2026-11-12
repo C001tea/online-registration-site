@@ -1,4 +1,5 @@
 import math
+import re
 from datetime import datetime, time
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -77,6 +78,28 @@ def validate_break(attrs, start, end):
     attrs['break_start'], attrs['break_end'] = break_start, break_end
 
 
+def appearance_of(user):
+    from .models import StaffAppearance
+    item = StaffAppearance.objects.filter(user=user).first()
+    return {'theme': item.theme, 'accent': item.accent} if item else {'theme': 'dark', 'accent': ''}
+
+
+def normalize_color(value):
+    """'' или #RRGGBB (заглавными); всё остальное — ошибка."""
+    value = (value or '').strip()
+    if value and not re.fullmatch(r'#[0-9A-Fa-f]{6}', value):
+        raise serializers.ValidationError('Цвет — в формате #RRGGBB')
+    return value.upper()
+
+
+class StaffAppearanceSerializer(serializers.Serializer):
+    theme = serializers.ChoiceField(choices=['dark', 'light', 'system'], required=False)
+    accent = serializers.CharField(max_length=7, allow_blank=True, required=False, trim_whitespace=True)
+
+    def validate_accent(self, value):
+        return normalize_color(value)
+
+
 def staff_me(user, staff):
     master = staff.master
     return {
@@ -92,8 +115,10 @@ def staff_me(user, staff):
                     # Самостоятельная регистрация: pending — сайт записи скрыт до подтверждения email
                     'status': staff.company.status,
                     'trial_ends_at': staff.company.trial_ends_at.isoformat() if staff.company.trial_ends_at else None,
-                    'public_url': settings.SALON_URL_TEMPLATE.format(slug=staff.company.slug)},
+                    'public_url': settings.SALON_URL_TEMPLATE.format(slug=staff.company.slug),
+                    'booking_accent': staff.company.booking_accent},
         'master_id': master.id if master else None,
+        'appearance': appearance_of(user),
     }
 
 
@@ -679,7 +704,8 @@ class StaffCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
-                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'logo', 'main_photo']
+                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'logo', 'main_photo',
+                  'booking_accent']
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},
                         'late_cancel_hours': {'max_value': 48}}
@@ -689,6 +715,9 @@ class StaffCompanySerializer(serializers.ModelSerializer):
         if not value:
             raise serializers.ValidationError('Укажите название салона')
         return value
+
+    def validate_booking_accent(self, value):
+        return normalize_color(value)
 
     def get_logo(self, obj):
         return obj.logo.url if obj.logo else None

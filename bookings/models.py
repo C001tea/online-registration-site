@@ -1,3 +1,4 @@
+from django.core.validators import RegexValidator
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -14,6 +15,10 @@ class PublicCompanyManager(models.Manager):
 
     def get_queryset(self):
         return super().get_queryset().filter(status=Company.STATUS_ACTIVE)
+
+
+# Цвет в формате #RRGGBB — значение попадает в CSS, другие форматы не принимаются
+HEX_COLOR_VALIDATOR = RegexValidator(r'^#[0-9A-Fa-f]{6}$', 'Цвет — в формате #RRGGBB')
 
 
 class Company(models.Model):
@@ -37,6 +42,8 @@ class Company(models.Model):
     auto_confirm = models.BooleanField(default=False)
     # Все мастера сами ведут свой график (иначе — только те, у кого Master.self_schedule)
     masters_self_schedule = models.BooleanField(default=False)
+    # Цвет кнопок и выбранных дат на сайте записи (#RRGGBB; пусто — фирменный розовый). Меняет владелец
+    booking_accent = models.CharField(max_length=7, blank=True, default='', validators=[HEX_COLOR_VALIDATOR])
 
     # Самостоятельная регистрация: салон виден клиентам после подтверждения email владельца
     STATUS_PENDING = 'pending'
