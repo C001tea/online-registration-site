@@ -15,6 +15,6 @@ urlpatterns = [
     path('salons/', salons.SalonListView.as_view(), name='super-salons'),
     path('salons/<int:pk>/', salons.SalonDetailView.as_view(), name='super-salon'),
     path('salons/<int:pk>/impersonate/', salons.ImpersonateView.as_view(), name='super-impersonate'),
-    re_path(r'^salons/(?P<pk>\d+)/(?P<action>status|trial|resend-verification|password-reset|note)/$',
+    re_path(r'^salons/(?P<pk>\d+)/(?P<action>status|trial|resend-verification|verify|password-reset|note)/$',
             salons.SalonActionView.as_view(), name='super-salon-action'),
 ]
