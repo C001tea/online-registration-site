@@ -19,6 +19,7 @@ from dashboard.signup import public_url, send_password_reset, send_verification
 from dashboard.tokens import get_impersonation_token
 from notifications.models import StaffTelegram
 
+from . import alerts
 from .auth import log
 from .models import SalonNote, SuperAdminLog
 from .views import SuperView
@@ -266,12 +267,13 @@ def bad(message):
 
 
 class SalonActionView(SuperView):
-    """POST /salons/<id>/<action>/: status, trial, resend-verification, password-reset, note."""
+    """POST /salons/<id>/<action>/: status, trial, resend-verification, verify, password-reset, note."""
 
     def post(self, request, pk, action):
         company = get_object_or_404(Company, pk=pk)
         handler = {
             'status': self.set_status, 'trial': self.set_trial, 'resend-verification': self.resend,
+            'verify': self.verify,
             'password-reset': self.password_reset, 'note': self.note,
         }.get(action)
         if handler is None:
@@ -333,6 +335,17 @@ class SalonActionView(SuperView):
         if not send_verification(owner, company):
             return 'Не удалось отправить письмо — проверьте почту сервера'
         log(request, 'verification_resent', company=company, details={'email': owner.email})
+        return None
+
+    def verify(self, request, company):
+        # Письмо не дошло (сбой почты) — поддержка подтверждает email вручную, салон открывается клиентам
+        if company.status != Company.STATUS_PENDING:
+            return 'Email уже подтверждён'
+        reason = str(request.data.get('reason') or '').strip()[:300]
+        company.status = Company.STATUS_ACTIVE
+        company.save(update_fields=['status'])
+        log(request, 'salon_verified_manually', company=company, details={'reason': reason})
+        alerts.salon_verified(company)
         return None
 
     def password_reset(self, request, company):

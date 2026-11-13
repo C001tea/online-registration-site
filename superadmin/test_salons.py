@@ -122,6 +122,22 @@ class SalonsTests(SalonsBase):
         self.assertIn('Поддержка TimePoint', mail.outbox[1].body)
         self.assertIn('reset-password?uid=', mail.outbox[1].body)
 
+    def test_manual_verify(self):
+        url = f'/api/super/salons/{self.pending.id}/verify/'
+        self.assertEqual(self.api.post(url, {'reason': 'письмо не дошло'}).data['status'], 'active')
+        self.pending.refresh_from_db()
+        self.assertEqual(self.pending.status, Company.STATUS_ACTIVE)
+        entry = SuperAdminLog.objects.filter(action='salon_verified_manually').get()
+        self.assertEqual(entry.details, {'reason': 'письмо не дошло'})
+        # Повторно и для работающего салона — нельзя; заблокированный не открывается
+        self.assertEqual(self.api.post(url).status_code, 400)
+        self.assertEqual(self.api.post(f'/api/super/salons/{self.salon.id}/verify/').status_code, 400)
+        self.salon.status = Company.STATUS_BLOCKED
+        self.salon.save()
+        self.assertEqual(self.api.post(f'/api/super/salons/{self.salon.id}/verify/').status_code, 400)
+        self.salon.refresh_from_db()
+        self.assertEqual(self.salon.status, Company.STATUS_BLOCKED)
+
     def test_notes(self):
         url = f'/api/super/salons/{self.salon.id}/note/'
         self.assertEqual(self.api.post(url, {'text': ' '}).status_code, 400)
