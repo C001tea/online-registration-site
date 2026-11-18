@@ -1181,3 +1181,17 @@ class SeedDemoTests(TestCase):
         self.assertEqual(get_staff(User.objects.get(username='demo_anna')).role, 'master')
         with self.assertRaises(CommandError):
             call_command('seed_demo', password='123', stdout=StringIO())
+
+    def test_test_salon_independent_masters_next_to_demo(self):
+        self.run_seed()
+        self.assertIn('Тестовый салон готов', self.run_seed(test=True))
+        self.run_seed(test=True)
+        test = Company.objects.get(slug='test')
+        self.assertTrue(test.masters_independent)
+        self.assertFalse(Company.objects.get(slug='demo').masters_independent)  # демо не тронут
+        self.assertEqual(get_staff(User.objects.get(username='test')).role, 'owner')
+        anna = get_staff(User.objects.get(username='test_anna'))
+        self.assertEqual((anna.role, anna.company, anna.independent), ('master', test, True))
+        self.assertEqual(get_staff(User.objects.get(username='test_maria')).master.name, 'Мария')
+        self.assertFalse(AdminProfile.objects.filter(company=test, role='admin').exists())
+        self.assertTrue(test.payments.exists())

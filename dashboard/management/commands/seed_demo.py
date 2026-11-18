@@ -3,6 +3,9 @@
 
 Каждый запуск пересоздаёт демо-салон заново относительно сегодняшней даты.
 Пароль для входов demo / demo_admin / demo_anna — из --password или --password-stdin.
+
+--test — тестовый салон (slug test) для проверки новинок перед показом клиентам: как у первого клиента,
+без администратора, мастера работают сами (принимают оплату). Входы: test (владелец), test_anna, test_maria.
 """
 import random
 import sys
@@ -25,6 +28,8 @@ from finance.services import salary_row
 
 SLUG = 'demo'
 USERNAMES = {'owner': 'demo', 'admin': 'demo_admin', 'master': 'demo_anna'}
+TEST_SLUG = 'test'
+TEST_USERNAMES = {'owner': 'test', 'master': 'test_anna', 'master2': 'test_maria'}
 
 # (категория, услуга, минут, цена)
 SERVICES = [
@@ -68,11 +73,16 @@ def client_pool(rng):
 
 class Command(BaseCommand):
     help = 'Пересоздать демо-салон (slug demo) с неделей активной работы: записи, оплаты, касса, зарплаты'
+    slug = SLUG
+    usernames = USERNAMES
+    test = False
 
     def add_arguments(self, parser):
         parser.add_argument('--password', help='пароль входов demo / demo_admin / demo_anna')
         parser.add_argument('--password-stdin', action='store_true', help='прочитать пароль из stdin')
         parser.add_argument('--seed', type=int, default=2026, help='зерно случайных данных')
+        parser.add_argument('--test', action='store_true',
+                            help='тестовый салон (slug test): без администратора, мастера работают сами')
 
     def handle(self, *args, **options):
         password = sys.stdin.readline().strip() if options['password_stdin'] else (options['password'] or '')
@@ -84,9 +94,15 @@ class Command(BaseCommand):
             raise CommandError(' '.join(exc.messages))
 
         rng = random.Random(options['seed'])
+        if options.get('test'):
+            self.slug, self.usernames, self.test = TEST_SLUG, TEST_USERNAMES, True
         with transaction.atomic():
             self.reset()
             stats = self.build(rng, password)
+        if self.test:
+            self.stdout.write('Тестовый салон готов: {masters} мастера, {appointments} записей, {payments} оплат. '
+                              'Входы: test (владелец), test_anna и test_maria (мастера).'.format(**stats))
+            return
         self.stdout.write(
             'Демо-салон готов: {masters} мастера, {appointments} записей ({by_status}), '
             '{payments} оплат на {revenue} L, {operations} операций по кассе. '
@@ -94,16 +110,19 @@ class Command(BaseCommand):
         )
 
     def reset(self):
-        Company.objects.filter(slug=SLUG).delete()  # каскадом: мастера, записи, оплаты, касса
-        User.objects.filter(username__in=USERNAMES.values()).delete()
+        Company.objects.filter(slug=self.slug).delete()  # каскадом: мастера, записи, оплаты, касса
+        User.objects.filter(username__in=self.usernames.values()).delete()
 
     def build(self, rng, password):
         now = timezone.localtime()
         today = now.date()
         company = Company.objects.create(
-            name='Nail Studio (демо)', slug=SLUG, address='str. Ștefan cel Mare 120, Chișinău',
-            phone='+37322000000', description='Демонстрационный салон: данные сгенерированы автоматически.',
+            name='Тестовый салон' if self.test else 'Nail Studio (демо)', slug=self.slug,
+            address='str. Ștefan cel Mare 120, Chișinău', phone='+37322000000',
+            description=('Тестовый салон TimePoint: здесь проверяют новые функции.' if self.test
+                         else 'Демонстрационный салон: данные сгенерированы автоматически.'),
             latitude=Decimal('47.024800'), longitude=Decimal('28.832100'),
+            masters_independent=self.test,
         )
 
         categories = {name: ServiceCategory.objects.create(company=company, name=name)
@@ -111,15 +130,24 @@ class Command(BaseCommand):
         services = [Service.objects.create(company=company, category=categories[c], name=n, duration=d, price=p)
                     for c, n, d, p in SERVICES]
 
-        owner = User.objects.create_user(USERNAMES['owner'], password=password, first_name='Владелец демо')
+        names = self.usernames
+        owner = User.objects.create_user(names['owner'], password=password,
+                                         first_name='Владелец' if self.test else 'Владелец демо')
         AdminProfile.objects.create(user=owner, company=company, role='owner')
-        admin = User.objects.create_user(USERNAMES['admin'], password=password, first_name='Администратор демо')
-        AdminProfile.objects.create(user=admin, company=company, role='admin')
-        master_user = User.objects.create_user(USERNAMES['master'], password=password, first_name='Анна')
+        if self.test:
+            # Как у первого клиента: администратора нет, оплату принимают мастера
+            admin = owner
+            master_users = [User.objects.create_user(names['master'], password=password, first_name='Анна'),
+                            User.objects.create_user(names['master2'], password=password, first_name='Мария')]
+        else:
+            admin = User.objects.create_user(names['admin'], password=password, first_name='Администратор демо')
+            AdminProfile.objects.create(user=admin, company=company, role='admin')
+            master_users = [User.objects.create_user(names['master'], password=password, first_name='Анна')]
 
         masters = []
         for i, (name, days, (start, end), service_ids, (percent, fixed)) in enumerate(MASTERS):
-            master = Master.objects.create(company=company, name=name, user=master_user if i == 0 else None)
+            user = master_users[i] if i < len(master_users) else None
+            master = Master.objects.create(company=company, name=name, user=user)
             master.services.set(services[j] for j in service_ids)
             for day in range(7):
                 MasterSchedule.objects.create(master=master, day_of_week=day, start_time=time(start),
