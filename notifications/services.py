@@ -16,7 +16,7 @@ from dashboard.permissions import MANAGER_ROLES, get_staff
 from finance import penalties
 from finance.models import Penalty
 from . import login, telegram, texts
-from .models import AppointmentTelegram, ClientTelegram, OutgoingMessage, StaffLinkToken, StaffTelegram
+from .models import AppointmentTelegram, ClientTelegram, OutgoingMessage, StaffLinkToken, StaffReminder, StaffTelegram
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,12 @@ STAFF_LINK_TTL = timedelta(minutes=15)
 # (подтверждение пришло только что), за час — если меньше чем за REMINDER_1H_MIN_LEAD
 REMINDER_24H_MIN_LEAD = timedelta(hours=25)
 REMINDER_1H_MIN_LEAD = timedelta(hours=2)
+# Мастеру: напоминание за час до клиента (если записались позже, чем за STAFF_REMINDER_MIN_LEAD, — уже пришла «Новая запись»)
+STAFF_REMINDER_BEFORE = timedelta(hours=1)
+STAFF_REMINDER_MIN_LEAD = timedelta(minutes=70)
+# Вечерняя сводка на завтра — с этого часа (местное время)
+SUMMARY_HOUR = 20
+STAFF_OFF_ACTIONS = {'rem': 'remind_before', 'sum': 'daily_summary'}
 
 
 def starts_at(appointment):
@@ -306,12 +312,25 @@ def handle_callback(callback):
     action, _, link_id = (callback.get('data') or '').partition(':')
     answer = ''
     try:
-        answer = apply_action(action, link_id, chat_id, message.get('message_id'))
+        if action == 'soff':
+            answer = staff_turn_off(chat_id, link_id)
+        else:
+            answer = apply_action(action, link_id, chat_id, message.get('message_id'))
     finally:
         try:
             telegram.answer_callback(callback_id, answer)
         except telegram.TelegramError as exc:
             logger.warning('answerCallbackQuery failed: %s', exc)
+
+
+def staff_turn_off(chat_id, kind):
+    """Кнопка под напоминанием или сводкой: больше не присылать (включить снова — в панели, «Настройки»)."""
+    field = STAFF_OFF_ACTIONS.get(kind)
+    if not field or not chat_id:
+        return ''
+    if not StaffTelegram.objects.filter(chat_id=chat_id).update(**{field: False}):
+        return ''
+    return texts.STAFF_TURNED_OFF[kind]
 
 
 def apply_action(action, link_id, chat_id, message_id):
@@ -437,10 +456,83 @@ def queue_reminders(now=None):
     return queued
 
 
+# --- Сотрудникам: напоминание за час и сводка на завтра ---
+
+def master_chats():
+    """{master_id: chat_id} мастеров с привязанным аккаунтом, Telegram и включённым напоминанием."""
+    rows = StaffTelegram.objects.filter(
+        remind_before=True, user__worker_profile__isnull=False, user__worker_profile__is_active=True,
+    ).values_list('user__worker_profile__id', 'chat_id')
+    return dict(rows)
+
+
+def queue_staff_reminders(now=None):
+    """Мастеру — за час до визита: кто придёт, услуга, телефон. Каждый визит — один раз (после переноса — снова)."""
+    now = now or timezone.now()
+    chats = master_chats()
+    if not chats:
+        return 0
+    today = timezone.localdate(now)
+    appointments = (Appointment.objects.filter(
+        master_id__in=chats, status__in=ACTIVE_STATUSES, date__gte=today, date__lte=today + timedelta(days=1))
+        .select_related('company', 'master', 'service'))
+    queued = 0
+    for appointment in appointments:
+        start = starts_at(appointment)
+        if not timedelta(0) < start - now <= STAFF_REMINDER_BEFORE:
+            continue
+        if start - appointment.created_at < STAFF_REMINDER_MIN_LEAD:
+            continue
+        chat_id = chats[appointment.master_id]
+        _, created = StaffReminder.objects.get_or_create(appointment=appointment, chat_id=chat_id, starts=start)
+        if created:
+            enqueue(chat_id, texts.staff_reminder(appointment), [[(texts.STAFF_OFF_BUTTON['rem'], 'soff:rem')]])
+            queued += 1
+    return queued
+
+
+def summary_items(staff, day):
+    """Записи на день для сводки: мастеру — свои, владельцу/админу без профиля мастера — весь салон."""
+    queryset = (Appointment.objects.filter(company=staff.company, date=day, status__in=ACTIVE_STATUSES)
+                .select_related('master', 'service').order_by('start_time', 'id'))
+    if staff.master is not None:
+        return list(queryset.filter(master=staff.master)), False
+    if staff.is_manager:
+        return list(queryset), True
+    return [], False
+
+
+def queue_daily_summaries(now=None):
+    """Вечером (с SUMMARY_HOUR) — сводка на завтра. Если на завтра записей нет — ничего не шлём."""
+    now = now or timezone.now()
+    local = timezone.localtime(now)
+    if local.hour < SUMMARY_HOUR:
+        return 0
+    today = local.date()
+    tomorrow = today + timedelta(days=1)
+    queued = 0
+    links = StaffTelegram.objects.filter(daily_summary=True).exclude(summary_sent_on=today).select_related('user')
+    for link in links:
+        # Отмечаем до отправки: перезапуск воркера не пришлёт сводку дважды
+        if not StaffTelegram.objects.filter(pk=link.pk).exclude(summary_sent_on=today).update(summary_sent_on=today):
+            continue
+        staff = get_staff(link.user)
+        if staff is None:
+            continue
+        items, whole_salon = summary_items(staff, tomorrow)
+        if not items:
+            continue
+        enqueue(link.chat_id, texts.staff_summary(staff.company, tomorrow, items, whole_salon),
+                [[(texts.STAFF_OFF_BUTTON['sum'], 'soff:sum')]])
+        queued += 1
+    return queued
+
+
 def cleanup(now=None):
     """Отправленные сообщения храним 30 дней (в них имена и телефоны), ссылки сотрудников — до истечения."""
     now = now or timezone.now()
     OutgoingMessage.objects.filter(sent_at__lt=now - timedelta(days=30)).delete()
     OutgoingMessage.objects.filter(sent_at__isnull=True, created_at__lt=now - timedelta(days=7)).delete()
     StaffLinkToken.objects.filter(created_at__lt=now - STAFF_LINK_TTL).delete()
+    StaffReminder.objects.filter(created_at__lt=now - timedelta(days=30)).delete()
     login.cleanup(now)
