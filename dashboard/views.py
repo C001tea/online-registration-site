@@ -510,6 +510,12 @@ class ServiceViewSet(StaffViewMixin, viewsets.ModelViewSet):
         instance.is_active = False
         instance.save(update_fields=['is_active'])
 
+    @action(detail=True, methods=['post', 'delete'])
+    def photo(self, request, pk=None):
+        # POST multipart: file; DELETE — убрать фото
+        service = replace_photo(self.get_object(), 'photo', uploaded_file(request))
+        return Response(self.get_serializer(service).data)
+
 
 SCHEDULE_ACTIONS = ('schedule', 'days', 'add_day_off', 'remove_day_off', 'schedule_history')
 HISTORY_LIMIT = 30

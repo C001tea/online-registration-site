@@ -103,6 +103,8 @@ class Service(models.Model):
     duration = models.PositiveIntegerField(help_text="duration in minutes")
     price = models.DecimalField(max_digits=8, decimal_places=2)
     is_active = models.BooleanField(default=True)
+    # Фото результата (как будет выглядеть работа): на сайте записи рядом с услугой
+    photo = models.ImageField(upload_to='services/', blank=True, null=True)
 
     def __str__(self):
         return self.name

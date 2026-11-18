@@ -80,6 +80,24 @@ class PhotoUploadTests(StaffTestCase):
         self.assertIn(self.master2.photo.url, [m['photo'] for m in public if m['id'] == self.master2.id][0])
         self.assertEqual(self.api.delete(url).data['photo'], None)
 
+    def test_service_photo(self):
+        url = f'/api/staff/services/{self.service.id}/photo/'
+        response = self.upload(url, image_file(size=(1600, 1200)))
+        self.assertEqual(response.status_code, 200, response.data)
+        self.service.refresh_from_db()
+        self.assertEqual(stored_image(self.service.photo).size, (800, 600))
+        self.assertEqual(response.data['photo'], self.service.photo.url)
+        listed = self.api.get('/api/staff/services/').data
+        self.assertEqual([s['photo'] for s in listed if s['id'] == self.service.id], [self.service.photo.url])
+        public = self.api.get('/api/companies/a/services/').data
+        self.assertIn(self.service.photo.url, [s['photo'] for s in public if s['id'] == self.service.id][0])
+        self.assertIsNone(self.api.delete(url).data['photo'])
+        # Мастер фото услуги не меняет, чужой салон — не видит
+        self.auth(self.master_user)
+        self.assertEqual(self.upload(url, image_file()).status_code, 403)
+        self.auth(self.owner_b)
+        self.assertEqual(self.upload(url, image_file()).status_code, 404)
+
     def test_bad_files(self):
         url = '/api/staff/company/main-photo/'
         not_image = SimpleUploadedFile('x.jpg', b'not an image', content_type='image/jpeg')
