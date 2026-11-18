@@ -18,7 +18,7 @@ from finance import penalties
 from finance.models import METHOD_CHOICES, CashOperation, Penalty
 from notifications.models import AppointmentTelegram
 from .models import ClientNote
-from .permissions import NOT_ENOUGH_RIGHTS_MESSAGE, IsStaffManager
+from .permissions import NOT_ENOUGH_RIGHTS_MESSAGE, IsStaffManager, IsStaffManagerOrIndependent
 from .serializers import PHONE_REGION
 
 PAGE_SIZE = 50
@@ -38,11 +38,21 @@ def money(value):
     return str((value or Decimal('0')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 
-def client_rows(company, **filters):
-    """Записи салона, сгруппированные по телефону, со статистикой."""
+def scope(request):
+    """Записи, которые видит сотрудник: владелец и админ — весь салон, мастер (работает сам) — только свои."""
+    staff = request.staff
+    filters = {'company': staff.company}
+    if not staff.is_manager:
+        filters['master'] = staff.master
+    return filters
+
+
+def client_rows(company, master=None, **filters):
+    """Записи салона (или одного мастера), сгруппированные по телефону, со статистикой."""
     today = timezone.localdate()
-    appointments = Appointment.objects.filter(company=company, **filters).exclude(client_phone='')
-    latest_name = (Appointment.objects.filter(company=company, client_phone=OuterRef('client_phone'))
+    own = {'master': master} if master is not None else {}
+    appointments = Appointment.objects.filter(company=company, **own, **filters).exclude(client_phone='')
+    latest_name = (Appointment.objects.filter(company=company, client_phone=OuterRef('client_phone'), **own)
                    .order_by('-date', '-start_time', '-id').values('client_name')[:1])
     return appointments.values('client_phone').annotate(
         name=Subquery(latest_name),
@@ -84,12 +94,16 @@ def phone_param(value):
 
 
 class ClientListView(APIView):
-    """GET ?q=имя или цифры телефона&sort=last|visits|paid|name&page=1 -> {count, page_size, results}"""
-    permission_classes = [IsStaffManager]
+    """GET ?q=имя или цифры телефона&sort=last|visits|paid|name&page=1 -> {count, page_size, results}
+
+    Мастер, который работает сам, видит только своих клиентов и только их визиты к нему.
+    """
+    permission_classes = [IsStaffManagerOrIndependent]
 
     def get(self, request):
         company = request.staff.company
-        rows = client_rows(company)
+        visible = scope(request)
+        rows = client_rows(company, visible.get('master'))
         query = (request.query_params.get('q') or '').strip()
         if query:
             # Номер ищем без ведущего 0: «069…» хранится как «+37369…»
@@ -97,7 +111,7 @@ class ClientListView(APIView):
             match = Q(client_name__icontains=query)
             if len(digits) >= 3:
                 match |= Q(client_phone__contains=digits)
-            phones = Appointment.objects.filter(company=company).filter(match).values('client_phone')
+            phones = Appointment.objects.filter(**visible).filter(match).values('client_phone')
             rows = rows.filter(client_phone__in=phones)
         if request.query_params.get('blacklist') == '1':
             rows = rows.filter(client_phone__in=Penalty.objects.filter(
@@ -125,17 +139,19 @@ def most_frequent(appointments, field):
 
 
 class ClientCardView(APIView):
-    """GET ?phone= -> статистика, заметка салона и история визитов клиента в этом салоне."""
-    permission_classes = [IsStaffManager]
+    """GET ?phone= -> статистика, заметка салона и история визитов клиента в этом салоне
+    (мастеру, который работает сам, — только визиты к нему)."""
+    permission_classes = [IsStaffManagerOrIndependent]
 
     def get(self, request):
         company = request.staff.company
+        visible = scope(request)
         phone = phone_param(request.query_params.get('phone'))
-        rows = list(client_rows(company, client_phone=phone))
+        rows = list(client_rows(company, visible.get('master'), client_phone=phone))
         if not rows:
             raise StaffError(NOT_FOUND_MESSAGE, status.HTTP_404_NOT_FOUND)
         row = rows[0]
-        appointments = Appointment.objects.filter(company=company, client_phone=phone)
+        appointments = Appointment.objects.filter(**visible, client_phone=phone)
         history = (appointments.select_related('service', 'master', 'payment')
                    .order_by('-date', '-start_time', '-id')[:MAX_HISTORY])
         note = ClientNote.objects.filter(company=company, phone=phone).first()
@@ -174,14 +190,14 @@ class NoteSerializer(serializers.Serializer):
 
 class ClientNoteView(APIView):
     """PUT {phone, text} — заметка о клиенте (видна только персоналу салона)."""
-    permission_classes = [IsStaffManager]
+    permission_classes = [IsStaffManagerOrIndependent]
 
     def put(self, request):
         serializer = NoteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         company = request.staff.company
         phone = phone_param(serializer.validated_data['phone'])
-        if not Appointment.objects.filter(company=company, client_phone=phone).exists():
+        if not Appointment.objects.filter(**scope(request), client_phone=phone).exists():
             raise StaffError(NOT_FOUND_MESSAGE, status.HTTP_404_NOT_FOUND)
         note, _ = ClientNote.objects.update_or_create(
             company=company, phone=phone,
