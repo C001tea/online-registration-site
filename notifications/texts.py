@@ -220,3 +220,43 @@ TOO_LATE = 'Эту запись уже нельзя изменить'
 def staff_linked(company_name):
     return (f'✅ Готово! Уведомления о записях салона <b>{escape(company_name)}</b> '
             f'будут приходить сюда.')
+
+
+# --- Сотрудникам: напоминание за час и сводка на завтра ---
+
+STAFF_OFF_BUTTON = {'rem': '🔕 Не напоминать за час', 'sum': '🔕 Не присылать сводку'}
+STAFF_TURNED_OFF = {
+    'rem': 'Напоминания за час отключены. Включить снова: панель → Настройки → Telegram',
+    'sum': 'Сводка на завтра отключена. Включить снова: панель → Настройки → Telegram',
+}
+STAFF_WEEKDAYS = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье']
+
+
+def staff_reminder(appointment):
+    service = f'\n{escape(appointment.service.name)}' if appointment.service else ''
+    note = f'\nКомментарий: {escape(appointment.notes)}' if appointment.notes else ''
+    return (f'⏰ <b>Через час клиент</b> — в {appointment.start_time:%H:%M}{service}\n'
+            f'Клиент: {escape(appointment.client_name)}, {escape(appointment.client_phone)}{note}')
+
+
+def visits_word(count):
+    if count % 10 == 1 and count % 100 != 11:
+        return 'запись'
+    if count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14):
+        return 'записи'
+    return 'записей'
+
+
+def staff_summary(company, day, appointments, whole_salon=False):
+    """Сводка на завтра: время, клиент, услуга (для всего салона — и мастер)."""
+    count = len(appointments)
+    head = f'📋 <b>Завтра, {day:%d.%m} ({STAFF_WEEKDAYS[day.weekday()]}) — {count} {visits_word(count)}</b>'
+    lines = [head + (f'\n{escape(company.name)}' if whole_salon else '')]
+    for a in appointments:
+        parts = [f'{a.start_time:%H:%M}', escape(a.client_name)]
+        if a.service:
+            parts.append(escape(a.service.name))
+        if whole_salon and a.master:
+            parts.append(escape(a.master.name))
+        lines.append(' · '.join(parts))
+    return '\n'.join(lines)

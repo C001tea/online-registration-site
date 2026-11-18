@@ -35,6 +35,21 @@ class StaffTelegram(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='staff_telegram')
     chat_id = models.BigIntegerField()
     linked_at = models.DateTimeField(auto_now=True)
+    # Мастеру: напоминание за час до клиента; всем: вечерняя сводка на завтра. Отключаются в панели или в боте
+    remind_before = models.BooleanField(default=True)
+    daily_summary = models.BooleanField(default=True)
+    summary_sent_on = models.DateField(null=True, blank=True)
+
+
+class StaffReminder(models.Model):
+    """Напоминание мастеру о визите отправлено (starts — время визита: после переноса напомним снова)."""
+    appointment = models.ForeignKey('bookings.Appointment', on_delete=models.CASCADE, related_name='+')
+    chat_id = models.BigIntegerField()
+    starts = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['appointment', 'chat_id', 'starts'], name='unique_staff_reminder')]
 
 
 class StaffLinkToken(models.Model):

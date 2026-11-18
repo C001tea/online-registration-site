@@ -36,15 +36,35 @@ class TelegramWebhookView(APIView):
         return Response({'ok': True})
 
 
+def staff_telegram_data(link):
+    return {
+        'available': telegram.enabled(),
+        'connected': link is not None,
+        'remind_before': link.remind_before if link else True,
+        'daily_summary': link.daily_summary if link else True,
+    }
+
+
 class StaffTelegramView(APIView):
     """Telegram сотрудника: статус (GET), ссылка для подключения (POST), отключение (DELETE)."""
     permission_classes = [IsStaff]
 
     def get(self, request):
-        return Response({
-            'available': telegram.enabled(),
-            'connected': StaffTelegram.objects.filter(user=request.user).exists(),
-        })
+        return Response(staff_telegram_data(StaffTelegram.objects.filter(user=request.user).first()))
+
+    def patch(self, request):
+        """{remind_before, daily_summary} — напоминание за час до клиента и вечерняя сводка на завтра."""
+        link = StaffTelegram.objects.filter(user=request.user).first()
+        if not link:
+            return Response({'error': 'Сначала подключите Telegram'}, status=status.HTTP_400_BAD_REQUEST)
+        fields = [key for key in ('remind_before', 'daily_summary') if key in request.data]
+        for key in fields:
+            if not isinstance(request.data[key], bool):
+                return Response({'error': f'{key} — true или false'}, status=status.HTTP_400_BAD_REQUEST)
+            setattr(link, key, request.data[key])
+        if fields:
+            link.save(update_fields=fields)
+        return Response(staff_telegram_data(link))
 
     def post(self, request):
         if is_impersonation(request):

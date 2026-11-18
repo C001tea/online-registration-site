@@ -30,6 +30,8 @@ class Command(BaseCommand):
                     last_reminders = time.monotonic()
                     if telegram.enabled():
                         services.queue_reminders()
+                        services.queue_staff_reminders()
+                        services.queue_daily_summaries()
                         services.cleanup()
                     # Письма клиентам без Telegram: подтверждение и напоминание
                     email.process()

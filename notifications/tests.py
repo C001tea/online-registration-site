@@ -240,7 +240,8 @@ class StaffLinkTests(TelegramTestCase):
         admin = User.objects.create_user('admin', password='Str0ng-pass-123')
         AdminProfile.objects.create(user=admin, company=self.company, role='admin')
         self.auth(admin)
-        self.assertEqual(self.api.get('/api/staff/telegram/').data, {'available': True, 'connected': False})
+        self.assertEqual(self.api.get('/api/staff/telegram/').data,
+                         {'available': True, 'connected': False, 'remind_before': True, 'daily_summary': True})
         url = self.api.post('/api/staff/telegram/').data['url']
         token = StaffLinkToken.objects.get(user=admin).token
         self.assertEqual(url, f'https://t.me/salon_test_bot?start=s_{token}')
