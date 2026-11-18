@@ -11,5 +11,6 @@ urlpatterns = [
     path('salaries/<int:master_id>/scheme/', views.SchemeView.as_view(), name='finance-scheme'),
     path('salaries/<int:master_id>/payouts/', views.PayoutsView.as_view(), name='finance-payouts'),
     path('payouts/<int:pk>/', views.PayoutDetailView.as_view(), name='finance-payout'),
+    path('my-revenue/', views.MyRevenueView.as_view(), name='finance-my-revenue'),
     path('my-salary/', views.MySalaryView.as_view(), name='finance-my-salary'),
 ]

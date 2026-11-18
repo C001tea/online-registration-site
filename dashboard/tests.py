@@ -273,7 +273,7 @@ class MeTests(StaffTestCase):
                                            'penalty_percent': 50, 'late_cancel_hours': 3, 'status': 'active',
                                            'trial_ends_at': None,
                                            'public_url': settings.SALON_URL_TEMPLATE.format(slug='a'),
-                                           'booking_accent': ''})
+                                           'booking_accent': '', 'masters_independent': False})
         self.assertIsNone(data['master_id'])
         self.assertEqual(data['name'], 'owner')
 

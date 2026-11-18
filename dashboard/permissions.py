@@ -35,6 +35,11 @@ class StaffContext:
     def is_manager(self):
         return self.role in MANAGER_ROLES
 
+    @property
+    def independent(self):
+        """Мастер в салоне, где мастера работают сами: принимает оплату, видит своих клиентов и выручку."""
+        return self.role == 'master' and self.master is not None and self.company.masters_independent
+
 
 def get_staff(user):
     """Роль пользователя в панели салона -> StaffContext | None.
@@ -86,6 +91,17 @@ class IsStaffManager(IsStaff):
         if not super().has_permission(request, view):
             return False
         if not request.staff.is_manager:
+            raise PermissionDenied({'error': NOT_ENOUGH_RIGHTS_MESSAGE})
+        return True
+
+
+class IsStaffManagerOrIndependent(IsStaff):
+    """Владелец, администратор или мастер, который работает сам (тогда — только со своими визитами)."""
+
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+        if not (request.staff.is_manager or request.staff.independent):
             raise PermissionDenied({'error': NOT_ENOUGH_RIGHTS_MESSAGE})
         return True
 

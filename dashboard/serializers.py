@@ -116,7 +116,9 @@ def staff_me(user, staff):
                     'status': staff.company.status,
                     'trial_ends_at': staff.company.trial_ends_at.isoformat() if staff.company.trial_ends_at else None,
                     'public_url': settings.SALON_URL_TEMPLATE.format(slug=staff.company.slug),
-                    'booking_accent': staff.company.booking_accent},
+                    'booking_accent': staff.company.booking_accent,
+                    # Мастера работают сами: оплата, свои клиенты и выручка в панели мастера
+                    'masters_independent': staff.company.masters_independent},
         'master_id': master.id if master else None,
         'appearance': appearance_of(user),
     }
@@ -387,7 +389,11 @@ class StaffAppointmentWriteSerializer(serializers.Serializer):
         # Поля с тем же значением, что и сейчас, считаем не переданными
         changes = {key: value for key, value in data.items() if value != current[key]}
 
-        if staff.role == 'master':
+        if staff.independent:
+            # Мастер, который работает сам, ведёт свои записи полностью, но к другому мастеру не переводит
+            if 'master' in changes:
+                raise StaffError('Перевести запись к другому мастеру может только владелец', status.HTTP_403_FORBIDDEN)
+        elif staff.role == 'master':
             forbidden = set(changes) - {'status', 'notes'}
             if forbidden:
                 raise StaffError('Мастер может менять только статус и заметку', status.HTTP_403_FORBIDDEN)
@@ -704,7 +710,7 @@ class StaffCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
-                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'logo', 'main_photo',
+                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'logo', 'main_photo',
                   'booking_accent']
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},

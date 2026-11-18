@@ -42,6 +42,9 @@ class Company(models.Model):
     auto_confirm = models.BooleanField(default=False)
     # Все мастера сами ведут свой график (иначе — только те, у кого Master.self_schedule)
     masters_self_schedule = models.BooleanField(default=False)
+    # Мастера работают сами (салон без администратора, мастера арендуют место): мастер принимает оплату
+    # своих визитов, видит своих клиентов и выручку, переносит свои записи и ведёт свой график
+    masters_independent = models.BooleanField(default=False)
     # Цвет кнопок и выбранных дат на сайте записи (#RRGGBB; пусто — фирменный розовый). Меняет владелец
     booking_accent = models.CharField(max_length=7, blank=True, default='', validators=[HEX_COLOR_VALIDATOR])
 
@@ -83,7 +86,7 @@ class Master(models.Model):
 
     @property
     def can_edit_own_schedule(self):
-        return self.self_schedule or self.company.masters_self_schedule
+        return self.self_schedule or self.company.masters_self_schedule or self.company.masters_independent
 
 class ServiceCategory(models.Model):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='categories')

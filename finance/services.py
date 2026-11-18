@@ -239,3 +239,44 @@ def pay_salary(master, *, date_from, date_to, amount, method, user):
             company=master.company, master=master, date_from=date_from, date_to=date_to,
             amount=amount, operation=operation, created_by=user,
         )
+
+
+# --- Выручка мастера (мастера работают сами) ---
+
+def master_revenue(master, date_from, date_to):
+    """Сколько заплатили клиенты мастера за период (по дате визита) и какие прошедшие визиты ещё не оплачены."""
+    payments = Payment.objects.filter(master=master, date__gte=date_from, date__lte=date_to)
+    revenue = total(payments)
+    count = payments.count()
+    today = timezone.localdate()
+    unpaid = (Appointment.objects.filter(master=master, date__gte=date_from, date__lte=min(date_to, today),
+                                         status__in=['pending', 'confirmed', 'completed'], payment__isnull=True)
+              .select_related('service').order_by('date', 'start_time'))
+    return {
+        'date_from': date_from.isoformat(),
+        'date_to': date_to.isoformat(),
+        'revenue': str(revenue),
+        'visits': count,
+        'average_check': str(money(revenue / count)) if count else '0.00',
+        'discounts': str(total(payments, 'discount')),
+        'by_method': {method: str(total(payments.filter(method=method))) for method in METHODS},
+        'by_day': [
+            {'date': row['date'].isoformat(), 'visits': row['visits'], 'revenue': str(money(row['revenue']))}
+            for row in payments.values('date').annotate(visits=Count('id'), revenue=Sum('amount')).order_by('date')
+        ],
+        'payments': [
+            {'id': p.id, 'appointment': p.appointment_id, 'date': p.date.isoformat(),
+             'time': p.appointment.start_time.strftime('%H:%M'), 'client_name': p.appointment.client_name,
+             'service': p.appointment.service.name if p.appointment.service else None,
+             'amount': str(p.amount), 'discount': str(p.discount), 'method': p.method,
+             'can_cancel': timezone.localdate(p.created_at) == today}
+            for p in payments.select_related('appointment', 'appointment__service')
+            .order_by('-date', '-appointment__start_time')
+        ],
+        'unpaid': [
+            {'appointment': a.id, 'date': a.date.isoformat(), 'time': a.start_time.strftime('%H:%M'),
+             'client_name': a.client_name, 'service': a.service.name if a.service else None,
+             'price': str(money(price_of(a) if a.service else ZERO))}
+            for a in unpaid
+        ],
+    }

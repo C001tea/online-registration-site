@@ -8,7 +8,10 @@ from rest_framework.views import APIView
 from bookings import audit
 from bookings.models import Appointment, Master
 from dashboard.errors import StaffError
-from dashboard.permissions import IsStaff, IsStaffManager, IsStaffOwner, NOT_ENOUGH_RIGHTS_MESSAGE
+from django.utils import timezone
+
+from dashboard.permissions import (IsStaff, IsStaffManager, IsStaffManagerOrIndependent, IsStaffOwner,
+                                   NOT_ENOUGH_RIGHTS_MESSAGE)
 from dashboard.views import date_range_params, parse_date
 from . import services
 from .models import METHOD_CHOICES, CashOperation, Payment, SalaryPayout, SalaryScheme
@@ -69,16 +72,24 @@ def validated(serializer_class, data):
     return serializer.validated_data
 
 
+MASTER_UNPAY_MESSAGE = 'Отменить оплату прошлых дней может владелец салона'
+
+
 # --- Оплата визита ---
 
 class CheckoutView(APIView):
-    """POST — принять оплату (владелец, админ); DELETE — отменить оплату (только владелец)."""
-    permission_classes = [IsStaffManager]
+    """POST — принять оплату (владелец, админ); DELETE — отменить оплату (владелец).
+
+    Если мастера работают сами (Company.masters_independent), мастер принимает оплату своих визитов
+    и может отменить свою оплату в тот же день.
+    """
+    permission_classes = [IsStaffManagerOrIndependent]
 
     def get_appointment(self, request, pk):
-        return get_object_or_404(
-            Appointment.objects.select_related('service', 'master', 'company'), pk=pk, company=request.staff.company
-        )
+        queryset = Appointment.objects.select_related('service', 'master', 'company')
+        if request.staff.independent:
+            queryset = queryset.filter(master=request.staff.master)
+        return get_object_or_404(queryset, pk=pk, company=request.staff.company)
 
     def post(self, request, pk):
         data = validated(CheckoutSerializer, request.data)
@@ -92,10 +103,16 @@ class CheckoutView(APIView):
         return Response(row, status=status.HTTP_201_CREATED)
 
     def delete(self, request, pk):
-        if request.staff.role != 'owner':
+        staff = request.staff
+        if staff.role != 'owner' and not staff.independent:
             raise StaffError(NOT_ENOUGH_RIGHTS_MESSAGE, status_code=status.HTTP_403_FORBIDDEN)
         appointment = self.get_appointment(request, pk)
-        deleted, _ = Payment.objects.filter(appointment=appointment).delete()
+        payments = Payment.objects.filter(appointment=appointment)
+        if staff.independent:
+            payment = payments.first()
+            if payment and timezone.localdate(payment.created_at) != timezone.localdate():
+                raise StaffError(MASTER_UNPAY_MESSAGE, status_code=status.HTTP_403_FORBIDDEN)
+        deleted, _ = payments.delete()
         if not deleted:
             raise StaffError('Визит не оплачен', status_code=status.HTTP_404_NOT_FOUND)
         audit.log(appointment, 'payment_cancelled', request.user)
@@ -215,3 +232,20 @@ class MySalaryView(APIView):
         row = services.salary_row(master, date_from, date_to)
         row['visits_list'] = services.salary_visits(master, date_from, date_to)
         return Response(row)
+
+
+class MyRevenueView(APIView):
+    """Выручка мастера за период: сколько заплатили его клиенты (наличные, карта, перевод) и неоплаченные визиты.
+
+    Для салонов, где мастера работают сами; владельцу или админу, который сам работает мастером, — тоже.
+    """
+    permission_classes = [IsStaff]
+
+    def get(self, request):
+        staff = request.staff
+        if staff.master is None:
+            raise StaffError('У вашего аккаунта нет профиля мастера', status_code=status.HTTP_404_NOT_FOUND)
+        if not (staff.is_manager or staff.independent):
+            raise StaffError(NOT_ENOUGH_RIGHTS_MESSAGE, status_code=status.HTTP_403_FORBIDDEN)
+        date_from, date_to = period(request)
+        return Response(services.master_revenue(staff.master, date_from, date_to))
