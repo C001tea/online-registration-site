@@ -29,7 +29,7 @@ class ServiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Service
-        fields = ['id', 'name', 'category', 'category_name', 'duration', 'price']
+        fields = ['id', 'name', 'category', 'category_name', 'duration', 'price', 'photo']
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

@@ -474,10 +474,12 @@ class StaffServiceSerializer(serializers.ModelSerializer):
     category_name = serializers.SerializerMethodField()
     duration = serializers.IntegerField(min_value=5, max_value=600)
     price = serializers.DecimalField(max_digits=8, decimal_places=2, min_value=Decimal('0'))
+    # Фото загружается отдельно: POST/DELETE /services/<id>/photo/
+    photo = serializers.SerializerMethodField()
 
     class Meta:
         model = Service
-        fields = ['id', 'name', 'category', 'category_name', 'duration', 'price', 'is_active']
+        fields = ['id', 'name', 'category', 'category_name', 'duration', 'price', 'is_active', 'photo']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -485,6 +487,9 @@ class StaffServiceSerializer(serializers.ModelSerializer):
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category else None
+
+    def get_photo(self, obj):
+        return obj.photo.url if obj.photo else None
 
 
 class ServiceTermsSerializer(serializers.Serializer):
