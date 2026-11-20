@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand
 from django.db import close_old_connections
 
 from notifications import email, services, telegram
+from retention import auto as rhythm_auto
 from superadmin import alerts
 from superadmin.models import mark as health_mark
 
@@ -35,6 +36,11 @@ class Command(BaseCommand):
                         services.cleanup()
                     # Письма клиентам без Telegram: подтверждение и напоминание
                     email.process()
+                    # «Пора записаться» — только у салонов, где владелец включил автонапоминания (раз в час днём)
+                    try:
+                        rhythm_auto.run()
+                    except Exception:
+                        logger.exception('rhythm auto failed')
                     # Отметка для супер-админки: воркер жив (раз в минуту)
                     health_mark('worker', telegram=telegram.enabled(), email=email.enabled())
                     alerts.run()

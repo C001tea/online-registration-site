@@ -25,6 +25,8 @@ class RhythmMessage(models.Model):
     channel = models.CharField(max_length=10, choices=CHANNEL_CHOICES)
     sent_at = models.DateTimeField(default=timezone.now)
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    # Чат Telegram, куда написал бот: кнопка «Не напоминать» проверяет, что нажал тот же клиент
+    chat_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=['company', 'phone'])]

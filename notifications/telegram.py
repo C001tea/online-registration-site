@@ -57,8 +57,10 @@ def call(method, **params):
 
 
 def keyboard(buttons):
-    """[[('Текст', 'callback'), ...], ...] → inline_keyboard."""
-    return {'inline_keyboard': [[{'text': text, 'callback_data': data} for text, data in row] for row in buttons]}
+    """[[('Текст', 'callback'), ...], ...] → inline_keyboard. Вместо callback можно https-адрес — кнопка-ссылка."""
+    def button(text, data):
+        return {'text': text, 'url': data} if data.startswith('https://') else {'text': text, 'callback_data': data}
+    return {'inline_keyboard': [[button(text, data) for text, data in row] for row in buttons]}
 
 
 def send_message(chat_id, text, buttons=None, reply_markup=None):

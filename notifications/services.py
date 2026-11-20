@@ -314,6 +314,9 @@ def handle_callback(callback):
     try:
         if action == 'soff':
             answer = staff_turn_off(chat_id, link_id)
+        elif action == 'roff':
+            from retention.auto import telegram_opt_out  # retention импортирует notifications
+            answer = telegram_opt_out(chat_id, link_id, message.get('message_id'))
         else:
             answer = apply_action(action, link_id, chat_id, message.get('message_id'))
     finally:
