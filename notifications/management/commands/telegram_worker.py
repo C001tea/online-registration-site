@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand
 from django.db import close_old_connections
 
 from notifications import email, services, telegram
+from feedback import service as feedback
 from retention import auto as rhythm_auto
 from superadmin import alerts
 from superadmin.models import mark as health_mark
@@ -41,6 +42,11 @@ class Command(BaseCommand):
                         rhythm_auto.run()
                     except Exception:
                         logger.exception('rhythm auto failed')
+                    # Отзывы после визита — только у салонов, где владелец их включил
+                    try:
+                        feedback.run()
+                    except Exception:
+                        logger.exception('feedback requests failed')
                     # Отметка для супер-админки: воркер жив (раз в минуту)
                     health_mark('worker', telegram=telegram.enabled(), email=email.enabled())
                     alerts.run()

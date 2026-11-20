@@ -119,7 +119,8 @@ def staff_me(user, staff):
                     'booking_accent': staff.company.booking_accent,
                     # Мастера работают сами: оплата, свои клиенты и выручка в панели мастера
                     'masters_independent': staff.company.masters_independent,
-                    'rhythm_enabled': staff.company.rhythm_enabled},
+                    'rhythm_enabled': staff.company.rhythm_enabled,
+                    'reviews_enabled': staff.company.reviews_enabled},
         'master_id': master.id if master else None,
         'appearance': appearance_of(user),
     }
@@ -717,7 +718,7 @@ class StaffCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
-                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'rhythm_enabled', 'rhythm_auto', 'logo', 'main_photo',
+                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'rhythm_enabled', 'rhythm_auto', 'reviews_enabled', 'review_google_url', 'review_instagram', 'logo', 'main_photo',
                   'booking_accent']
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},
@@ -731,6 +732,21 @@ class StaffCompanySerializer(serializers.ModelSerializer):
 
     def validate_booking_accent(self, value):
         return normalize_color(value)
+
+    def validate_review_google_url(self, value):
+        value = (value or '').strip()
+        if value and not value.startswith('https://'):
+            raise serializers.ValidationError('Ссылка должна начинаться с https://')
+        return value
+
+    def validate_review_instagram(self, value):
+        value = (value or '').strip()
+        if not value or value.startswith('https://'):
+            return value
+        handle = value.lstrip('@')
+        if not re.fullmatch(r'[A-Za-z0-9._]{1,30}', handle):
+            raise serializers.ValidationError('Укажите имя в Instagram (например, @salon) или ссылку https://')
+        return '@' + handle
 
     def get_logo(self, obj):
         return obj.logo.url if obj.logo else None

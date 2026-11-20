@@ -31,6 +31,8 @@ STAFF_REMINDER_MIN_LEAD = timedelta(minutes=70)
 # Вечерняя сводка на завтра — с этого часа (местное время)
 SUMMARY_HOUR = 20
 STAFF_OFF_ACTIONS = {'rem': 'remind_before', 'sum': 'daily_summary'}
+# Оценка визита (rv1…rv5) и «показать отзыв на сайте» (rvp / rvn) — приложение feedback
+REVIEW_ACTIONS = {'rv1', 'rv2', 'rv3', 'rv4', 'rv5', 'rvp', 'rvn'}
 
 
 def starts_at(appointment):
@@ -271,6 +273,10 @@ def handle_update(update):
             from superadmin.alerts import link_chat
             link_chat(chat_id, payload[2:])
             return
+    # Клиент только что поставил оценку и пишет, что понравилось или что пошло не так
+    from feedback.service import take_comment
+    if take_comment(chat_id, text):
+        return
     reply(chat_id, texts.GREETING)
 
 
@@ -317,6 +323,9 @@ def handle_callback(callback):
         elif action == 'roff':
             from retention.auto import telegram_opt_out  # retention импортирует notifications
             answer = telegram_opt_out(chat_id, link_id, message.get('message_id'))
+        elif action in REVIEW_ACTIONS:
+            from feedback.service import telegram_action  # feedback импортирует notifications
+            answer = telegram_action(action, link_id, chat_id, message.get('message_id'))
         else:
             answer = apply_action(action, link_id, chat_id, message.get('message_id'))
     finally:

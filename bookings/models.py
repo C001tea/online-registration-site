@@ -49,6 +49,11 @@ class Company(models.Model):
     rhythm_enabled = models.BooleanField(default=False)
     # Ритм клиента: бот сам напоминает клиенту в Telegram или письмом, когда подходит срок. Включает владелец
     rhythm_auto = models.BooleanField(default=False)
+    # Отзывы после визита: бот спрашивает оценку, низкие сразу уходят владельцу. Включает владелец
+    reviews_enabled = models.BooleanField(default=False)
+    # Ссылка «Оставить отзыв в Google» и Instagram салона — в ответе клиенту после оценки
+    review_google_url = models.URLField(max_length=500, blank=True)
+    review_instagram = models.CharField(max_length=100, blank=True)
     # Цвет кнопок и выбранных дат на сайте записи (#RRGGBB; пусто — фирменный розовый). Меняет владелец
     booking_accent = models.CharField(max_length=7, blank=True, default='', validators=[HEX_COLOR_VALIDATOR])
 

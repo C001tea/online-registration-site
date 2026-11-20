@@ -1,10 +1,22 @@
 from django.utils import timezone
 from rest_framework import serializers
 from .models import Company, Service, ServiceCategory, Master, Appointment, Review
-from django.db.models import Avg
+from django.db.models import Count, Sum
 from .phone import normalize_phone
 from .slots import get_free_slots
 from .terms import duration_of, terms
+
+def master_rating(master):
+    """(средняя, число оценок): старые отзывы + оценки после визита — все, включая низкие."""
+    cache = getattr(master, '_rating', None)
+    if cache is None:
+        old = master.reviews.aggregate(total=Sum('rating'), count=Count('id'))
+        new = master.visit_reviews.filter(rating__isnull=False).aggregate(total=Sum('rating'), count=Count('id'))
+        count = (old['count'] or 0) + (new['count'] or 0)
+        total = (old['total'] or 0) + (new['total'] or 0)
+        cache = master._rating = (round(total / count, 1) if count else None, count)
+    return cache
+
 
 class MasterSerializer(serializers.ModelSerializer):
     reviews_count = serializers.SerializerMethodField()
@@ -16,11 +28,10 @@ class MasterSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'photo', 'description', 'is_active', 'avg_rating', 'reviews_count', 'company']
 
     def get_reviews_count(self, obj):
-        return obj.reviews.count()
+        return master_rating(obj)[1]
 
     def get_avg_rating(self, obj):
-        result = obj.reviews.aggregate(Avg('rating'))['rating__avg']
-        return round(result, 1) if result else None
+        return master_rating(obj)[0]
 
 class ServiceSerializer(serializers.ModelSerializer):
     """Услуга для клиента. context['ranges'] — разброс цены и длительности по мастерам («от – до»);

@@ -44,4 +44,5 @@ urlpatterns = [
     path('appointments/<int:pk>/checkout/', CheckoutView.as_view(), name='staff-checkout'),
     path('finance/', include('finance.urls')),
     path('rhythm/', include('retention.urls')),
+    path('reviews/', include('feedback.urls')),
 ] + router.urls

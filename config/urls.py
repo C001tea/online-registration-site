@@ -21,6 +21,7 @@ from django.urls import path, include
 from bookings.auth_views import ClientTokenRefreshView
 from bookings.security import limit_admin_login
 from notifications.views import TelegramLoginStartView, TelegramLoginVerifyView
+from feedback.public import review_page
 from retention.public import rhythm_opt_out
 
 # Вход во встроенную админку Django — с тем же лимитом перебора, что и вход в панель
@@ -33,6 +34,8 @@ urlpatterns = [
     path('api/auth/telegram/verify/', TelegramLoginVerifyView.as_view(), name='telegram-login-verify'),
     # Отписка от напоминаний «пора записаться» по ссылке из письма
     path('api/rhythm/off/<str:token>/', rhythm_opt_out, name='rhythm-opt-out'),
+    # Оценка визита по ссылке из письма
+    path('api/review/<str:token>/', review_page, name='visit-review'),
     path('api/', include('bookings.urls')),
     # API панели салона (персонал: владелец, администраторы, мастера)
     path('api/staff/', include('dashboard.urls')),

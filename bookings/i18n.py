@@ -152,6 +152,27 @@ RO = {
     'Не присылать напоминания «пора записаться» от {salon}?': 'Nu mai doriți mementouri de programare de la {salon}?',
     'Письма о ваших записях (подтверждение и напоминание о визите) продолжат приходить.': 'E-mailurile despre programările dvs. (confirmare și memento de vizită) vor veni în continuare.',
     'Не присылать': 'Nu mai trimiteți',
+    # --- Отзывы после визита ---
+    'Как вам визит к мастеру {master}?': 'Cum a fost vizita la {master}?',
+    'Как вам визит?': 'Cum a fost vizita?',
+    'Оцените, пожалуйста, — это займёт секунду.': 'Vă rugăm să o evaluați — durează o secundă.',
+    'Как вам визит? {salon}': 'Cum a fost vizita? {salon}',
+    'Нам очень жаль, что визит вас огорчил. Что пошло не так? Напишите ответным сообщением — владелец салона прочитает и свяжется с вами.': 'Ne pare foarte rău că vizita v-a supărat. Ce nu a mers bine? Scrieți-ne un răspuns — proprietarul salonului îl va citi și vă va contacta.',
+    'Спасибо за оценку! Если не сложно, напишите пару слов ответным сообщением. Можно показать ваш отзыв на сайте салона?': 'Mulțumim pentru evaluare! Dacă nu vă este greu, scrieți-ne câteva cuvinte. Putem afișa recenzia dvs. pe site-ul salonului?',
+    'Да, показать': 'Da, afișați',
+    'Отзыв в Google': 'Recenzie pe Google',
+    'Спасибо! Отзыв появится на сайте салона.': 'Mulțumim! Recenzia va apărea pe site-ul salonului.',
+    'Хорошо, отзыв видит только салон.': 'Bine, recenzia o vede doar salonul.',
+    'Готово': 'Gata',
+    'Оценку уже не изменить': 'Evaluarea nu mai poate fi modificată',
+    'Спасибо!': 'Mulțumim!',
+    'Спасибо, что рассказали. Владелец салона уже знает и свяжется с вами.': 'Mulțumim că ne-ați spus. Proprietarul salonului știe deja și vă va contacta.',
+    'Спасибо за отзыв!': 'Mulțumim pentru recenzie!',
+    'Пара слов о визите (необязательно)': 'Câteva cuvinte despre vizită (opțional)',
+    'Можно показать мой отзыв на сайте салона': 'Recenzia mea poate fi afișată pe site-ul salonului',
+    'Отправить': 'Trimite',
+    'Спасибо, что рассказали. Нам очень жаль — владелец салона уже знает и свяжется с вами.': 'Mulțumim că ne-ați spus. Ne pare foarte rău — proprietarul salonului știe deja și vă va contacta.',
+    'Спасибо за отзыв! Будем рады, если расскажете о нас:': 'Mulțumim pentru recenzie! Ne-ar bucura să spuneți și altora despre noi:',
 }
 
 WEEKDAYS = {
