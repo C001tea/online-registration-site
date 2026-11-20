@@ -32,6 +32,7 @@ from superadmin import alerts
 from .errors import StaffError
 from .permissions import IsStaff, IsStaffManager, get_staff
 from .salons import clean_name, create_salon, login_taken, slug_error, slugify_name, suggest_slug
+from .solo import SPECIALIZATIONS, setup_solo
 from .serializers import PHONE_REGION, staff_me
 from .tokens import get_staff_tokens
 
@@ -134,6 +135,14 @@ class SignupSerializer(serializers.Serializer):
     password = serializers.CharField(trim_whitespace=False, max_length=128)
     phone = serializers.CharField(max_length=30, required=False, allow_blank=True)
     accept_terms = serializers.BooleanField()
+    # Я салон / студия — или я мастер, работаю сам (тогда salon_name — имя мастера)
+    kind = serializers.ChoiceField(choices=[Company.KIND_SALON, Company.KIND_SOLO], required=False,
+                                   default=Company.KIND_SALON)
+    specialization = serializers.ChoiceField(choices=SPECIALIZATIONS, required=False, default='other')
+    district = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+
+    def validate_district(self, value):
+        return clean_name(value)[:100]
 
     def validate_salon_name(self, value):
         value = clean_name(value)
@@ -194,7 +203,13 @@ class SignupView(APIView):
         company, user = create_salon(
             name=data['salon_name'], slug=data['slug'], owner_login=data['email'], email=data['email'],
             password=data['password'], phone=data.get('phone', ''), pending=True,
+            kind=data.get('kind', Company.KIND_SALON),
         )
+        if company.kind == Company.KIND_SOLO:
+            company.district = data.get('district', '')
+            company.address_private = True
+            company.save(update_fields=['district', 'address_private'])
+            setup_solo(company, user, data['salon_name'], data.get('specialization', 'other'))
         email_sent = send_verification(user, company)
         alerts.salon_signed_up(company, user)
         return Response({**get_staff_tokens(user), 'me': staff_me(user, get_staff(user)),

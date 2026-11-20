@@ -58,6 +58,15 @@ class Company(models.Model):
     portfolio_enabled = models.BooleanField(default=False)
     # Привлечение клиентов: «Поделиться окнами», ссылки мастеров, откуда приходят записи (по умолчанию выключено)
     promo_enabled = models.BooleanField(default=False)
+    # Тип аккаунта: салон или мастер, работающий сам (соло — владелец он же единственный мастер)
+    KIND_SALON = 'salon'
+    KIND_SOLO = 'solo'
+    KIND_CHOICES = [(KIND_SALON, 'Салон'), (KIND_SOLO, 'Соло-мастер')]
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, default=KIND_SALON)
+    # Район для сайта записи («Ботаника»); при address_private точный адрес клиент видит только
+    # в подтверждении записи (сообщения и страница управления записью)
+    district = models.CharField(max_length=100, blank=True, default='')
+    address_private = models.BooleanField(default=False)
     # Цвет кнопок и выбранных дат на сайте записи (#RRGGBB; пусто — фирменный розовый). Меняет владелец
     booking_accent = models.CharField(max_length=7, blank=True, default='', validators=[HEX_COLOR_VALIDATOR])
 

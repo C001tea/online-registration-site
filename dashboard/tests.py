@@ -275,7 +275,8 @@ class MeTests(StaffTestCase):
                                            'public_url': settings.SALON_URL_TEMPLATE.format(slug='a'),
                                            'booking_accent': '', 'masters_independent': False,
                                            'rhythm_enabled': False, 'reviews_enabled': False,
-                                           'portfolio_enabled': False, 'promo_enabled': False})
+                                           'portfolio_enabled': False, 'promo_enabled': False,
+                                           'kind': 'salon'})
         self.assertIsNone(data['master_id'])
         self.assertEqual(data['name'], 'owner')
 
