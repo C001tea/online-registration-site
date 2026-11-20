@@ -118,7 +118,8 @@ def staff_me(user, staff):
                     'public_url': settings.SALON_URL_TEMPLATE.format(slug=staff.company.slug),
                     'booking_accent': staff.company.booking_accent,
                     # Мастера работают сами: оплата, свои клиенты и выручка в панели мастера
-                    'masters_independent': staff.company.masters_independent},
+                    'masters_independent': staff.company.masters_independent,
+                    'rhythm_enabled': staff.company.rhythm_enabled},
         'master_id': master.id if master else None,
         'appearance': appearance_of(user),
     }
@@ -479,7 +480,8 @@ class StaffServiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Service
-        fields = ['id', 'name', 'category', 'category_name', 'duration', 'price', 'is_active', 'photo']
+        fields = ['id', 'name', 'category', 'category_name', 'duration', 'price', 'is_active', 'photo', 'repeat_days']
+        extra_kwargs = {'repeat_days': {'min_value': 1, 'max_value': 365}}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -715,7 +717,7 @@ class StaffCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
-                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'logo', 'main_photo',
+                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'rhythm_enabled', 'logo', 'main_photo',
                   'booking_accent']
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},

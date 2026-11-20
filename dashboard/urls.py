@@ -43,4 +43,5 @@ urlpatterns = [
     path('telegram/', StaffTelegramView.as_view(), name='staff-telegram'),
     path('appointments/<int:pk>/checkout/', CheckoutView.as_view(), name='staff-checkout'),
     path('finance/', include('finance.urls')),
+    path('rhythm/', include('retention.urls')),
 ] + router.urls

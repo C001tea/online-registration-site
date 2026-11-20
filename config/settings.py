@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     'notifications',
     'finance',
     'superadmin',
+    'retention',
 ]
 
 MIDDLEWARE = [

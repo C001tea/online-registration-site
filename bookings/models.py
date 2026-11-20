@@ -45,6 +45,8 @@ class Company(models.Model):
     # Мастера работают сами (салон без администратора, мастера арендуют место): мастер принимает оплату
     # своих визитов, видит своих клиентов и выручку, переносит свои записи и ведёт свой график
     masters_independent = models.BooleanField(default=False)
+    # Ритм клиента: раздел «Пора записаться» в панели (кому пора снова на услугу). Включает владелец
+    rhythm_enabled = models.BooleanField(default=False)
     # Цвет кнопок и выбранных дат на сайте записи (#RRGGBB; пусто — фирменный розовый). Меняет владелец
     booking_accent = models.CharField(max_length=7, blank=True, default='', validators=[HEX_COLOR_VALIDATOR])
 
@@ -105,6 +107,8 @@ class Service(models.Model):
     is_active = models.BooleanField(default=True)
     # Фото результата (как будет выглядеть работа): на сайте записи рядом с услугой
     photo = models.ImageField(upload_to='services/', blank=True, null=True)
+    # Ритм клиента: через сколько дней клиенты обычно повторяют услугу (пусто — считаем по истории салона)
+    repeat_days = models.PositiveSmallIntegerField(null=True, blank=True)
 
     def __str__(self):
         return self.name
