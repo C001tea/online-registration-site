@@ -5,6 +5,7 @@ from django.db.models import Count, Sum
 from .phone import normalize_phone
 from .slots import get_free_slots
 from .terms import duration_of, terms
+from .sources import SITE, clean_source
 
 def master_rating(master):
     """(средняя, число оценок): старые отзывы + оценки после визита — все, включая низкие."""
@@ -27,7 +28,7 @@ class MasterSerializer(serializers.ModelSerializer):
     class Meta:
         model = Master
         fields = ['id', 'name', 'photo', 'description', 'is_active', 'avg_rating', 'reviews_count', 'company',
-                  'works_count']
+                  'works_count', 'link_slug']
 
     def get_reviews_count(self, obj):
         return master_rating(obj)[1]
@@ -82,11 +83,16 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     consent = serializers.BooleanField(write_only=True, required=False)
     # Напоминание: 0 — не нужно; пусто — как обычно
     reminder_minutes = serializers.ChoiceField(choices=REMINDER_CHOICES, required=False, allow_null=True)
+    # Откуда пришёл клиент (?from= в ссылке): незнакомое значение — other
+    source = serializers.CharField(required=False, allow_blank=True, max_length=100)
 
     class Meta:
         model = Appointment
         fields = ['master', 'service', 'client_name', 'client_phone', 'client_email', 'date', 'start_time', 'notes',
-                  'consent', 'reminder_minutes']
+                  'consent', 'reminder_minutes', 'source']
+
+    def validate_source(self, value):
+        return clean_source(value)
 
     def validate_consent(self, value):
         if not value:
@@ -96,6 +102,7 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         if validated_data.pop('consent', False):
             validated_data['consent_at'] = timezone.now()
+        validated_data.setdefault('source', SITE)
         return super().create(validated_data)
 
     def validate_client_phone(self, value):
@@ -145,6 +152,10 @@ class VisitCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     consent = serializers.BooleanField(required=False)
     reminder_minutes = serializers.ChoiceField(choices=REMINDER_CHOICES, required=False, allow_null=True)
+    source = serializers.CharField(required=False, allow_blank=True, max_length=100)
+
+    def validate_source(self, value):
+        return clean_source(value)
 
     def validate_client_phone(self, value):
         phone = normalize_phone(value)

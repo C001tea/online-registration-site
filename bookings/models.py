@@ -56,6 +56,8 @@ class Company(models.Model):
     review_instagram = models.CharField(max_length=100, blank=True)
     # Портфолио: фото работ в карточке записи и галерея мастера на сайте записи. Включает владелец
     portfolio_enabled = models.BooleanField(default=False)
+    # Привлечение клиентов: «Поделиться окнами», ссылки мастеров, откуда приходят записи (по умолчанию выключено)
+    promo_enabled = models.BooleanField(default=False)
     # Цвет кнопок и выбранных дат на сайте записи (#RRGGBB; пусто — фирменный розовый). Меняет владелец
     booking_accent = models.CharField(max_length=7, blank=True, default='', validators=[HEX_COLOR_VALIDATOR])
 
@@ -91,6 +93,8 @@ class Master(models.Model):
     is_active = models.BooleanField(default=True)
     # Мастер сам меняет свой график в панели (даёт владелец или администратор)
     self_schedule = models.BooleanField(default=False)
+    # Короткая ссылка мастера: <сайт салона>/m/<link_slug> — сразу запись к нему (пусто — /m/<id>)
+    link_slug = models.SlugField(max_length=40, blank=True, default='')
 
     def __str__(self):
         return self.name
@@ -163,6 +167,8 @@ class Appointment(models.Model):
     price = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     # «Материалы и детали» работы (гель, форма, длина) — видно мастеру в следующий визит клиента
     work_notes = models.TextField(blank=True)
+    # Откуда пришла онлайн-запись: site, stories, instagram, telegram, master… (пусто — до учёта или из панели)
+    source = models.CharField(max_length=20, blank=True, default='')
     # Визит из нескольких услуг подряд: общий uuid у всех его записей (bookings/visits.py)
     visit = models.UUIDField(null=True, blank=True, db_index=True)
     # Скидка на услугу в процентах (ставит персонал в карточке; подставляется при оплате)

@@ -2,6 +2,7 @@ import math
 import re
 from datetime import datetime, time
 from decimal import Decimal, ROUND_HALF_UP
+from bookings.sources import source_of
 
 from django.conf import settings
 from django.contrib.auth.validators import UnicodeUsernameValidator
@@ -121,7 +122,8 @@ def staff_me(user, staff):
                     'masters_independent': staff.company.masters_independent,
                     'rhythm_enabled': staff.company.rhythm_enabled,
                     'reviews_enabled': staff.company.reviews_enabled,
-                    'portfolio_enabled': staff.company.portfolio_enabled},
+                    'portfolio_enabled': staff.company.portfolio_enabled,
+                    'promo_enabled': staff.company.promo_enabled},
         'master_id': master.id if master else None,
         'appearance': appearance_of(user),
     }
@@ -149,6 +151,8 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
     master = serializers.SerializerMethodField()
     service = serializers.SerializerMethodField()
     source = serializers.SerializerMethodField()
+    # Откуда пришёл онлайн-клиент: site, stories, instagram… (admin — записал персонал)
+    came_from = serializers.SerializerMethodField()
     payment = serializers.SerializerMethodField()
     blacklist = serializers.SerializerMethodField()
     penalty = serializers.SerializerMethodField()
@@ -158,7 +162,7 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
         model = Appointment
         fields = [
             'id', 'date', 'start_time', 'end_time', 'duration', 'status', 'master', 'service',
-            'client_name', 'client_phone', 'client_email', 'notes', 'source', 'created_at', 'payment',
+            'client_name', 'client_phone', 'client_email', 'notes', 'source', 'came_from', 'created_at', 'payment',
             'blacklist', 'penalty', 'visit', 'discount', 'buffer_minutes', 'booker_name', 'booker_phone', 'reminder',
             'visit_confirmed', 'visit_confirmed_at',
         ]
@@ -182,6 +186,9 @@ class StaffAppointmentSerializer(serializers.ModelSerializer):
 
     def get_source(self, obj):
         return 'staff' if obj.created_by_staff else 'online'
+
+    def get_came_from(self, obj):
+        return source_of(obj)
 
     def get_payment(self, obj):
         payment = paid(obj)
@@ -719,7 +726,7 @@ class StaffCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
-                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'rhythm_enabled', 'rhythm_auto', 'reviews_enabled', 'review_google_url', 'review_instagram', 'portfolio_enabled', 'logo', 'main_photo',
+                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'rhythm_enabled', 'rhythm_auto', 'reviews_enabled', 'review_google_url', 'review_instagram', 'portfolio_enabled', 'promo_enabled', 'logo', 'main_photo',
                   'booking_accent']
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},

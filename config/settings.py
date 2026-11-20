@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     'retention',
     'feedback',
     'portfolio',
+    'promo',
 ]
 
 MIDDLEWARE = [
