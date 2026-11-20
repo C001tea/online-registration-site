@@ -46,4 +46,5 @@ urlpatterns = [
     path('rhythm/', include('retention.urls')),
     path('reviews/', include('feedback.urls')),
     path('works/', include('portfolio.urls')),
+    path('promo/', include('promo.urls')),
 ] + router.urls

@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 from .i18n import client_lang
 from .security import TOO_MANY_MESSAGE, client_ip, hit
 from .models import Company, Master, Service, Review, Appointment
+from .sources import SITE
 from .serializers import (MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer,
                           ReviewSerializer, VisitCreateSerializer, master_rating)
 from . import visits
@@ -445,6 +446,7 @@ class VisitCreateView(APIView):
                     price=part['price'], status='confirmed' if company.auto_confirm else 'pending',
                     client=client, lang=client_lang(request), consent_at=timezone.now(),
                     reminder_minutes=data.get('reminder_minutes'), visit=visit_id,
+                    source=data.get('source') or SITE,
                 ))
             for appointment in created:
                 notifications.appointment_created(appointment, request.user)
