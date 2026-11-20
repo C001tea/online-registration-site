@@ -16,7 +16,10 @@ from bookings.slots import ACTIVE_STATUSES
 from .errors import StaffError
 from finance import penalties
 from finance.models import METHOD_CHOICES, CashOperation, Penalty
+from feedback.models import VisitReview
 from notifications.models import AppointmentTelegram
+from portfolio.models import WorkPhoto
+from retention.models import RhythmMessage
 from .models import ClientNote
 from .permissions import NOT_ENOUGH_RIGHTS_MESSAGE, IsStaffManager, IsStaffManagerOrIndependent
 from .serializers import PHONE_REGION
@@ -269,8 +272,13 @@ class ClientForgetView(APIView):
             CashOperation.objects.filter(penalty__appointment_id__in=ids).update(comment='Штраф (данные клиента удалены)')
             Penalty.objects.filter(company=company, phone=phone).delete()
             ClientNote.objects.filter(company=company, phone=phone).delete()
+            # Фото работ и «Материалы и детали», напоминания «пора записаться», текст и телефон в отзывах
+            for photo in WorkPhoto.objects.filter(appointment_id__in=ids):
+                photo.delete()
+            RhythmMessage.objects.filter(company=company, phone=phone).delete()
+            VisitReview.objects.filter(appointment_id__in=ids).update(phone='', comment='', publish=False)
             count = Appointment.objects.filter(id__in=ids).update(
-                client_name=FORGOTTEN_NAME, client_phone='', client_email='', notes='', client=None)
+                client_name=FORGOTTEN_NAME, client_phone='', client_email='', notes='', work_notes='', client=None)
         return Response({'anonymized': count})
 
 

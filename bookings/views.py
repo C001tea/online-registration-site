@@ -10,7 +10,7 @@ from .i18n import client_lang
 from .security import TOO_MANY_MESSAGE, client_ip, hit
 from .models import Company, Master, Service, Review, Appointment
 from .serializers import (MasterSerializer, ServiceSerializer, AppointmentCreateSerializer, CompanySerializer,
-                          ReviewSerializer, VisitCreateSerializer)
+                          ReviewSerializer, VisitCreateSerializer, master_rating)
 from . import visits
 from .slots import get_free_slots, month_overview, nearest_slots, parse_month, ACTIVE_STATUSES
 from .terms import duration_of, service_ranges, terms
@@ -255,16 +255,21 @@ class ReviewView(APIView):
         master = get_object_or_404(Master, id=master_id, company=company)
 
         reviews = Review.objects.filter(master=master).order_by('-created_at')
-        serializer = ReviewSerializer(reviews, many=True)
-
-        avg_rating = reviews.aggregate(Avg('rating'))['rating__avg']
+        rows = list(ReviewSerializer(reviews, many=True).data)
+        # Оценки после визита: текст — только тех, кто разрешил показать; имя — первое слово
+        for review in (master.visit_reviews.filter(rating__isnull=False, publish=True)
+                       .select_related('appointment').order_by('-rated_at')[:50]):
+            rows.append({'id': f'v{review.id}', 'client_name': (review.appointment.client_name.split() or [''])[0],
+                         'rating': review.rating, 'comment': review.comment, 'created_at': review.rated_at})
+        rows.sort(key=lambda row: str(row['created_at']), reverse=True)
+        avg_rating, count = master_rating(master)
 
         return Response(
             {
                 'master': master.name,
-                'avg_rating': round(avg_rating, 1) if avg_rating else None,
-                'reviews_count': reviews.count(),
-                'reviews': serializer.data
+                'avg_rating': avg_rating,
+                'reviews_count': count,
+                'reviews': rows,
             }
         )
 

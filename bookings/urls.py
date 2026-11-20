@@ -1,4 +1,6 @@
 from django.urls import path
+
+from portfolio.views import PublicMasterWorksView
 from . import views
 from . import auth_views
 from . import manage_views
@@ -20,6 +22,7 @@ urlpatterns = [
     path('manage/<str:token>/reschedule/', manage_views.ManageRescheduleView.as_view()),
     path('companies/<slug:slug>/info/', views.CompanyInfoView.as_view()),
     path('companies/<slug:slug>/master/<int:master_id>/reviews/', views.ReviewView.as_view()),
+    path('companies/<slug:slug>/masters/<int:master_id>/works/', PublicMasterWorksView.as_view()),
     path('companies/<slug:slug>/master/<int:master_id>/services/', views.MasterServices.as_view()),
     path('appointments/my/', auth_views.MyAppointmentView.as_view()),
     path('companies/<slug:slug>/my-debt/', auth_views.MyDebtView.as_view()),

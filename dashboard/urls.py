@@ -45,4 +45,5 @@ urlpatterns = [
     path('finance/', include('finance.urls')),
     path('rhythm/', include('retention.urls')),
     path('reviews/', include('feedback.urls')),
+    path('works/', include('portfolio.urls')),
 ] + router.urls
