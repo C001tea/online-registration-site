@@ -47,6 +47,8 @@ class Company(models.Model):
     masters_independent = models.BooleanField(default=False)
     # Ритм клиента: раздел «Пора записаться» в панели (кому пора снова на услугу). Включает владелец
     rhythm_enabled = models.BooleanField(default=False)
+    # Ритм клиента: бот сам напоминает клиенту в Telegram или письмом, когда подходит срок. Включает владелец
+    rhythm_auto = models.BooleanField(default=False)
     # Цвет кнопок и выбранных дат на сайте записи (#RRGGBB; пусто — фирменный розовый). Меняет владелец
     booking_accent = models.CharField(max_length=7, blank=True, default='', validators=[HEX_COLOR_VALIDATOR])
 

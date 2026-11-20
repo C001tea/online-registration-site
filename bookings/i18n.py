@@ -141,6 +141,17 @@ RO = {
         'Nu v-am mai văzut de mult — vă așteptăm cu drag. Alegeți ora: {url}',
     'Прошло уже {ago} с вашего визита ({visit}). Записать вас снова? Выбрать время: {url}':
         'Au trecut deja {ago} de la ultima vizită ({visit}). Vă programăm din nou? Alegeți ora: {url}',
+    'Не хотите таких напоминаний — нажмите «Не напоминать».': 'Nu doriți astfel de mesaje? Apăsați «Nu-mi mai aminti».',
+    'Выбрать время': 'Alegeți ora',
+    'Не напоминать': 'Nu-mi mai aminti',
+    'Хорошо, больше не будем напоминать': 'Bine, nu vă vom mai deranja',
+    'Пора записаться: {salon}': 'E timpul pentru o programare: {salon}',
+    'Не хотите получать такие письма? Отписаться: {url}': 'Nu doriți astfel de e-mailuri? Dezabonare: {url}',
+    'Ссылка неверна или устарела.': 'Linkul nu este valid sau a expirat.',
+    'Готово: напоминания «пора записаться» от {salon} больше не придут.': 'Gata: nu veți mai primi mementouri de programare de la {salon}.',
+    'Не присылать напоминания «пора записаться» от {salon}?': 'Nu mai doriți mementouri de programare de la {salon}?',
+    'Письма о ваших записях (подтверждение и напоминание о визите) продолжат приходить.': 'E-mailurile despre programările dvs. (confirmare și memento de vizită) vor veni în continuare.',
+    'Не присылать': 'Nu mai trimiteți',
 }
 
 WEEKDAYS = {
