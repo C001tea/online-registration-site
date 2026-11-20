@@ -69,7 +69,15 @@ class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'name', 'slug', 'address', 'phone', 'logo', 'main_photo', 'latitude', 'longitude', 'description',
-                  'cancel_hours', 'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'booking_accent']
+                  'cancel_hours', 'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'booking_accent',
+                  'kind', 'district']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.address_private:
+            # Мастер работает дома: на сайте — только район, точный адрес — в подтверждении записи
+            data.update(address=instance.district, latitude=None, longitude=None)
+        return data
 
 # За сколько минут до визита клиент может попросить напоминание (0 — не напоминать)
 REMINDER_CHOICES = [0, 60, 120, 180, 360, 720, 1440, 2880]

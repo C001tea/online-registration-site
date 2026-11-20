@@ -75,13 +75,14 @@ def login_taken(login):
         '@' in login and User.objects.filter(email__iexact=login).exists())
 
 
-def create_salon(*, name, slug, owner_login, password, email='', address='', phone='', pending=False):
+def create_salon(*, name, slug, owner_login, password, email='', address='', phone='', pending=False,
+                 kind=Company.KIND_SALON):
     """Салон и его владелец. pending=True — самостоятельная регистрация: салон скрыт до подтверждения
     email и получает пробный период; ручное подключение — сразу работает."""
     now = timezone.now()
     with transaction.atomic():
         company = Company.objects.create(
-            name=name, slug=slug, address=address, phone=phone,
+            name=name, slug=slug, address=address, phone=phone, kind=kind,
             status=Company.STATUS_PENDING if pending else Company.STATUS_ACTIVE,
             trial_ends_at=now + timedelta(days=settings.TRIAL_DAYS) if pending else None,
             terms_accepted_at=now if pending else None,
