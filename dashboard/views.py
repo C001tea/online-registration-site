@@ -175,10 +175,14 @@ class StaffTokenRefreshSerializer(TokenRefreshSerializer):
         if not token_matches_password(refresh, user):
             # Пароль сменили или сбросили после выдачи токена
             raise InvalidToken('Пароль изменён — войдите снова')
+        if refresh.session_expired():
+            raise InvalidToken('Сессия устарела, войдите снова')
         try:
             data = super().validate(attrs)
         except User.DoesNotExist:
             raise InvalidToken('Пользователь не найден')
+        # Скользящий срок: вместе с новым access выдаём новый refresh, пока пользователь заходит
+        data['refresh'] = str(refresh.renew())
         # Последняя активность салона (супер-админка): вход или продление сессии
         User.objects.filter(pk=user.pk).update(last_login=timezone.now())
         return data

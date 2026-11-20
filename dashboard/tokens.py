@@ -7,6 +7,7 @@
 Claim pwd — отпечаток хеша пароля: после смены или сброса пароля старые токены
 (и refresh, и access) перестают действовать (проверка в IsStaff и при refresh).
 """
+import time
 from datetime import timedelta
 
 from django.utils.crypto import constant_time_compare, salted_hmac
@@ -27,12 +28,20 @@ def token_matches_password(token, user):
     return isinstance(claim, str) and constant_time_compare(claim, password_fingerprint(user))
 
 
+# Вход держится долго, чтобы на телефоне (иконка на экране iPhone) не вводить пароль снова и снова:
+# каждое обновление токена выдаёт новый refresh ещё на REFRESH_DAYS (скользящий срок), но не дольше
+# MAX_SESSION_DAYS с момента ввода пароля. Смена или сброс пароля обрывает вход сразу (claim pwd).
+REFRESH_DAYS = 90
+MAX_SESSION_DAYS = 365
+FIRST_LOGIN_CLAIM = 'first'
+
+
 class StaffAccessToken(AccessToken):
     lifetime = timedelta(hours=12)
 
 
 class StaffRefreshToken(RefreshToken):
-    lifetime = timedelta(days=7)
+    lifetime = timedelta(days=REFRESH_DAYS)
     access_token_class = StaffAccessToken
 
     @classmethod
@@ -41,7 +50,22 @@ class StaffRefreshToken(RefreshToken):
         # simplejwt копирует claim'ы refresh-токена в access, scope окажется и там
         token['scope'] = STAFF_SCOPE
         token[PASSWORD_CLAIM] = password_fingerprint(user)
+        token[FIRST_LOGIN_CLAIM] = int(time.time())
         return token
+
+    def session_expired(self):
+        """С момента ввода пароля прошло больше MAX_SESSION_DAYS. У старых токенов claim нет — не считаем."""
+        first = self.get(FIRST_LOGIN_CLAIM)
+        return isinstance(first, int) and time.time() - first > MAX_SESSION_DAYS * 86400
+
+    def renew(self):
+        """Тот же вход, новый срок: новый jti и exp, остальные claim'ы (scope, pwd, first) сохраняются."""
+        self.set_jti()
+        self.set_exp()
+        self.set_iat()
+        if FIRST_LOGIN_CLAIM not in self:
+            self[FIRST_LOGIN_CLAIM] = int(time.time())
+        return self
 
 
 # Вход супер-админа в панель салона от имени владельца: только access на 1 час, без refresh.
