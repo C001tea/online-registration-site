@@ -134,6 +134,13 @@ RO = {
     'в салоне при следующем визите.':
         'A fost aplicată o amendă de {amount} ({percent}% din prețul serviciului). Ea se achită '
         'la salon la următoarea vizită.',
+    # --- Ритм клиента: «пора записаться» ---
+    'Здравствуйте, {name}!': 'Bună ziua, {name}!',
+    'Здравствуйте!': 'Bună ziua!',
+    'Давно вас не видели — будем рады видеть вас снова. Выбрать время: {url}':
+        'Nu v-am mai văzut de mult — vă așteptăm cu drag. Alegeți ora: {url}',
+    'Прошло уже {ago} с вашего визита ({visit}). Записать вас снова? Выбрать время: {url}':
+        'Au trecut deja {ago} de la ultima vizită ({visit}). Vă programăm din nou? Alegeți ora: {url}',
 }
 
 WEEKDAYS = {
