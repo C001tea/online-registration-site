@@ -189,6 +189,40 @@ class LoginTests(StaffTestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(AccessToken(response.data['access'])['scope'], 'staff')
 
+    def test_refresh_is_sliding_and_long(self):
+        """Вход на телефоне держится долго: каждое обновление даёт новый refresh ещё на 90 дней."""
+        tokens = self.login('owner').data
+        first = RefreshToken(tokens['refresh'])
+        self.assertEqual(first['exp'] - first['iat'], 90 * 86400)
+        response = self.refresh(tokens['refresh'])
+        self.assertEqual(response.status_code, 200, response.data)
+        renewed = RefreshToken(response.data['refresh'])
+        self.assertNotEqual(renewed['jti'], first['jti'])
+        self.assertEqual(renewed['scope'], 'staff')
+        self.assertEqual(renewed['first'], first['first'])
+        self.assertEqual(renewed['pwd'], first['pwd'])
+        # Новый refresh сам обновляется дальше
+        self.assertEqual(self.refresh(response.data['refresh']).status_code, 200)
+
+    def test_session_has_absolute_limit(self):
+        """С момента ввода пароля — не дольше года, сколько бы раз ни обновляли."""
+        tokens = self.login('owner').data
+        old = RefreshToken(tokens['refresh'])
+        old['first'] = int(timezone.now().timestamp()) - 366 * 86400
+        response = self.refresh(str(old))
+        self.assertEqual(response.status_code, 401)
+        old['first'] = int(timezone.now().timestamp()) - 300 * 86400
+        self.assertEqual(self.refresh(str(old)).status_code, 200)
+
+    def test_refresh_without_first_claim_still_works(self):
+        """Токены, выданные до появления лимита, продолжают работать и получают отметку."""
+        tokens = self.login('owner').data
+        old = RefreshToken(tokens['refresh'])
+        del old['first']
+        response = self.refresh(str(old))
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn('first', RefreshToken(response.data['refresh']))
+
     def test_client_refresh_rejected(self):
         client_refresh = RefreshToken.for_user(self.owner)
         response = self.api.post('/api/staff/auth/refresh/', {'refresh': str(client_refresh)}, format='json')
