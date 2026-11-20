@@ -21,17 +21,25 @@ def master_rating(master):
 class MasterSerializer(serializers.ModelSerializer):
     reviews_count = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
+    works_count = serializers.SerializerMethodField()
     company = serializers.ReadOnlyField(source='company.name')
 
     class Meta:
         model = Master
-        fields = ['id', 'name', 'photo', 'description', 'is_active', 'avg_rating', 'reviews_count', 'company']
+        fields = ['id', 'name', 'photo', 'description', 'is_active', 'avg_rating', 'reviews_count', 'company',
+                  'works_count']
 
     def get_reviews_count(self, obj):
         return master_rating(obj)[1]
 
     def get_avg_rating(self, obj):
         return master_rating(obj)[0]
+
+    def get_works_count(self, obj):
+        # Портфолио на сайте — только если владелец его включил
+        if not obj.company.portfolio_enabled:
+            return 0
+        return obj.work_photos.filter(public=True, hidden=False).count()
 
 class ServiceSerializer(serializers.ModelSerializer):
     """Услуга для клиента. context['ranges'] — разброс цены и длительности по мастерам («от – до»);

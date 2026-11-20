@@ -120,7 +120,8 @@ def staff_me(user, staff):
                     # Мастера работают сами: оплата, свои клиенты и выручка в панели мастера
                     'masters_independent': staff.company.masters_independent,
                     'rhythm_enabled': staff.company.rhythm_enabled,
-                    'reviews_enabled': staff.company.reviews_enabled},
+                    'reviews_enabled': staff.company.reviews_enabled,
+                    'portfolio_enabled': staff.company.portfolio_enabled},
         'master_id': master.id if master else None,
         'appearance': appearance_of(user),
     }
@@ -718,7 +719,7 @@ class StaffCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ['id', 'slug', 'name', 'address', 'phone', 'description', 'latitude', 'longitude', 'cancel_hours',
-                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'rhythm_enabled', 'rhythm_auto', 'reviews_enabled', 'review_google_url', 'review_instagram', 'logo', 'main_photo',
+                  'penalty_percent', 'late_cancel_hours', 'auto_confirm', 'masters_self_schedule', 'masters_independent', 'rhythm_enabled', 'rhythm_auto', 'reviews_enabled', 'review_google_url', 'review_instagram', 'portfolio_enabled', 'logo', 'main_photo',
                   'booking_accent']
         read_only_fields = ['id', 'slug']
         extra_kwargs = {'cancel_hours': {'max_value': 168}, 'penalty_percent': {'max_value': 100},

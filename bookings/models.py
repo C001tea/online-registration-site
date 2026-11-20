@@ -54,6 +54,8 @@ class Company(models.Model):
     # Ссылка «Оставить отзыв в Google» и Instagram салона — в ответе клиенту после оценки
     review_google_url = models.URLField(max_length=500, blank=True)
     review_instagram = models.CharField(max_length=100, blank=True)
+    # Портфолио: фото работ в карточке записи и галерея мастера на сайте записи. Включает владелец
+    portfolio_enabled = models.BooleanField(default=False)
     # Цвет кнопок и выбранных дат на сайте записи (#RRGGBB; пусто — фирменный розовый). Меняет владелец
     booking_accent = models.CharField(max_length=7, blank=True, default='', validators=[HEX_COLOR_VALIDATOR])
 
@@ -159,6 +161,8 @@ class Appointment(models.Model):
     email_reminder_sent = models.BooleanField(default=False)
     # Цена услуги на момент записи (у мастера может быть своя цена); пусто — цена услуги
     price = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    # «Материалы и детали» работы (гель, форма, длина) — видно мастеру в следующий визит клиента
+    work_notes = models.TextField(blank=True)
     # Визит из нескольких услуг подряд: общий uuid у всех его записей (bookings/visits.py)
     visit = models.UUIDField(null=True, blank=True, db_index=True)
     # Скидка на услугу в процентах (ставит персонал в карточке; подставляется при оплате)

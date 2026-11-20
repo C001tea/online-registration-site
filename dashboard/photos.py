@@ -15,7 +15,7 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_PIXELS = 40_000_000  # защита от «бомбы распаковки»: 40 Мп хватает любой камере телефона
 FORMATS = ('JPEG', 'PNG', 'WEBP')
 # Наибольшая сторона после уменьшения
-MAX_SIDE = {'main_photo': 1600, 'logo': 600, 'photo': 800}
+MAX_SIDE = {'main_photo': 1600, 'logo': 600, 'photo': 800, 'image': 1200}
 FORMAT_MESSAGE = 'Загрузите фото в формате JPG, PNG или WebP'
 
 
